@@ -1,6 +1,6 @@
 {
   "name": "@cyberdrk/travel-concierge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Find contact details for accommodation listings (Airbnb, Booking.com, VRBO, Expedia)",
   "type": "module",
   "main": "dist/index.js",
@@ -20,7 +20,16 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
   },
-  "keywords": ["travel", "concierge", "airbnb", "booking", "vrbo", "expedia", "contact", "cli"],
+  "keywords": [
+    "travel",
+    "concierge",
+    "airbnb",
+    "booking",
+    "vrbo",
+    "expedia",
+    "contact",
+    "cli"
+  ],
   "author": "",
   "license": "MIT",
   "repository": {
