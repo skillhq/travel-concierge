@@ -1,6 +1,6 @@
 {
   "name": "@skillhq/travel-concierge",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Find contact details for accommodation listings (Airbnb, Booking.com, VRBO, Expedia)",
   "type": "module",
   "main": "dist/index.js",
