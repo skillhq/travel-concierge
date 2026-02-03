@@ -44,13 +44,19 @@
     "dist"
   ],
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.0",
+    "@deepgram/sdk": "^3.5.0",
+    "@elevenlabs/elevenlabs-js": "^2.33.0",
     "commander": "^14.0.0",
     "json5": "^2.2.3",
-    "kleur": "^4.1.5"
+    "kleur": "^4.1.5",
+    "twilio": "^5.0.0",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.10",
     "typescript": "^5.4.0",
     "vitest": "^4.0.0"
   },

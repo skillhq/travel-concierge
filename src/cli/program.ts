@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import kleur from 'kleur';
+import { callCommand } from '../commands/call.js';
 import { configCommand } from '../commands/config.js';
 import { findContactCommand } from '../commands/find-contact.js';
+import { serverCommand } from '../commands/server.js';
 import type { CliColors, CliContext } from './shared.js';
 
 function createColors(): CliColors {
@@ -41,6 +43,8 @@ export function createProgram(): Command {
   // Register commands
   findContactCommand(program, getContext);
   configCommand(program, getContext);
+  serverCommand(program, getContext);
+  callCommand(program, getContext);
 
   return program;
 }

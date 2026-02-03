@@ -3,7 +3,20 @@ import type { CliContext } from '../cli/shared.js';
 import type { ConciergeConfig } from '../lib/concierge-client-types.js';
 import { deleteConfigValue, getConfigPath, loadConfig, setConfigValue } from '../lib/config.js';
 
-const VALID_KEYS: (keyof ConciergeConfig)[] = ['googlePlacesApiKey', 'instagramSessionId', 'timeoutMs'];
+const VALID_KEYS: (keyof ConciergeConfig)[] = [
+  'googlePlacesApiKey',
+  'instagramSessionId',
+  'timeoutMs',
+  'twilioAccountSid',
+  'twilioAuthToken',
+  'twilioPhoneNumber',
+  'deepgramApiKey',
+  'elevenLabsApiKey',
+  'elevenLabsVoiceId',
+  'ngrokAuthToken',
+  'callServerPort',
+  'anthropicApiKey',
+];
 
 export function configCommand(program: Command, getContext: () => CliContext): void {
   const config = program.command('config').description('Manage configuration');
@@ -62,7 +75,7 @@ export function configCommand(program: Command, getContext: () => CliContext): v
 
       // Type coercion for numeric values
       let typedValue: string | number = value;
-      if (typedKey === 'timeoutMs') {
+      if (typedKey === 'timeoutMs' || typedKey === 'callServerPort') {
         typedValue = Number.parseInt(value, 10);
         if (Number.isNaN(typedValue)) {
           console.log(ctx.colors.error(`Invalid number: ${value}`));

@@ -9,6 +9,8 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json5');
 
 const DEFAULT_CONFIG: ConciergeConfig = {
   timeoutMs: 30000,
+  callServerPort: 3000,
+  elevenLabsVoiceId: 'EXAVITQu4vr4xnSDxMaL', // Rachel voice
 };
 
 export function getConfigPath(): string {

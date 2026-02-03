@@ -60,6 +60,17 @@ export interface ConciergeConfig {
   googlePlacesApiKey?: string;
   instagramSessionId?: string;
   timeoutMs?: number;
+  // Voice call configuration
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioPhoneNumber?: string;
+  deepgramApiKey?: string;
+  elevenLabsApiKey?: string;
+  elevenLabsVoiceId?: string;
+  ngrokAuthToken?: string;
+  callServerPort?: number;
+  // AI conversation
+  anthropicApiKey?: string;
 }
 
 // Fetch options
