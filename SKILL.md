@@ -1,7 +1,7 @@
 ---
 name: travel-concierge
 description: Find accommodation contact details and run AI-assisted booking calls
-version: 1.3.0
+version: 1.3.1
 triggers:
   - find contact
   - hotel contact
