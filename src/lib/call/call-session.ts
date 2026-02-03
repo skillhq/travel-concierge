@@ -16,7 +16,7 @@ import type {
   TwilioMediaMessage,
 } from './call-types.js';
 import { ConversationAI, extractMostRecentQuestion, isLikelyShortAcknowledgement } from './conversation-ai.js';
-import { createPhoneCallSTT, type DeepgramSTT } from './providers/deepgram.js';
+import { createPhoneCallSTT, type DeepgramSTT, type TranscriptResult } from './providers/deepgram.js';
 import { createPhoneCallTTS, ElevenLabsApiError, type ElevenLabsTTS } from './providers/elevenlabs.js';
 import { hangupCall } from './providers/twilio.js';
 
@@ -51,6 +51,7 @@ export class CallSession extends EventEmitter {
   private hangupTimer: NodeJS.Timeout | null = null; // Timer for delayed hangup
   private cleanedUp = false; // Prevent multiple cleanup calls
   private suppressSttUntilMs = 0; // Prevent echo from AI audio being transcribed as human speech
+  private sttTimelineStartMs = 0; // Wall-clock anchor for Deepgram word timestamps
 
   // Event handler references for cleanup
   private sttHandlers: { event: string; handler: (...args: any[]) => void }[] = [];
@@ -166,7 +167,7 @@ export class CallSession extends EventEmitter {
     this.stt = createPhoneCallSTT(this.config.deepgramApiKey);
 
     // Store event handlers for cleanup
-    const sttTranscriptHandler = (result: { text: string; isFinal: boolean }) => {
+    const sttTranscriptHandler = (result: TranscriptResult) => {
       this.handleTranscript(result);
     };
     const sttErrorHandler = (err: Error) => this.log(`[STT] Error: ${err.message}`);
@@ -188,6 +189,7 @@ export class CallSession extends EventEmitter {
     try {
       await this.stt.connect();
       this.log('[STT] Connection established');
+      this.sttTimelineStartMs = Date.now();
     } catch (err) {
       this.log(`[STT] Connection failed: ${err}`);
       throw err;
@@ -345,8 +347,14 @@ export class CallSession extends EventEmitter {
   /**
    * Handle transcription results from Deepgram
    */
-  private handleTranscript(result: { text: string; isFinal: boolean }): void {
+  private handleTranscript(result: TranscriptResult): void {
     if (!result.text.trim()) return;
+
+    const transcriptEndMs = this.getTranscriptEndTimestampMs(result);
+    if (transcriptEndMs !== undefined && transcriptEndMs <= this.suppressSttUntilMs) {
+      this.log(`[STT] Ignoring likely overlap transcript by word timing: "${result.text}"`);
+      return;
+    }
 
     // Prevent AI voice playback/echo from being treated as human speech.
     // This intentionally drops barge-in during playback to avoid self-transcription loops.
@@ -409,6 +417,14 @@ export class CallSession extends EventEmitter {
         }
       }, CallSession.RESPONSE_DEBOUNCE_MS);
     }
+  }
+
+  private getTranscriptEndTimestampMs(result: TranscriptResult): number | undefined {
+    if (!this.sttTimelineStartMs || !result.words || result.words.length === 0) {
+      return undefined;
+    }
+    const maxWordEndSeconds = result.words.reduce((max, word) => Math.max(max, word.end), 0);
+    return this.sttTimelineStartMs + Math.round(maxWordEndSeconds * 1000);
   }
 
   /**

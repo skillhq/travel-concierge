@@ -333,6 +333,35 @@ describe('CallSession', () => {
       expect(acceptedHuman).toBeDefined();
     });
 
+    it('should ignore late-finalized overlap transcripts using Deepgram word timing', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const serverMessages: ServerMessage[] = [];
+      session.on('message', (msg) => serverMessages.push(msg));
+
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+      await vi.advanceTimersByTimeAsync(1700); // move beyond normal post-TTS suppression
+
+      // Arrives late, but word timing says utterance ended during suppression window.
+      mockSTT.emit('transcript', {
+        text: 'Great.',
+        isFinal: true,
+        confidence: 0.9,
+        words: [{ word: 'Great', start: 0.55, end: 0.7, confidence: 0.9 }],
+      });
+      await vi.advanceTimersByTimeAsync(1200);
+
+      const leakedHuman = serverMessages.find(
+        (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('Great'),
+      );
+      expect(leakedHuman).toBeUndefined();
+    });
+
     it('should pass short-ack turn context to ConversationAI based on latest assistant question', async () => {
       const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
       const mockWs = createMockWebSocket();
