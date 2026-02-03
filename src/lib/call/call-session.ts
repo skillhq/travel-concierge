@@ -15,7 +15,7 @@ import type {
   TranscriptEntry,
   TwilioMediaMessage,
 } from './call-types.js';
-import { ConversationAI } from './conversation-ai.js';
+import { ConversationAI, extractMostRecentQuestion, isLikelyShortAcknowledgement } from './conversation-ai.js';
 import { createPhoneCallSTT, type DeepgramSTT } from './providers/deepgram.js';
 import { createPhoneCallTTS, ElevenLabsApiError, type ElevenLabsTTS } from './providers/elevenlabs.js';
 import { hangupCall } from './providers/twilio.js';
@@ -425,7 +425,16 @@ export class CallSession extends EventEmitter {
 
     try {
       this.log(`[AI] Generating response to: "${humanSaid}"`);
-      const response = await this.conversationAI.respond(humanSaid);
+      const lastAssistantUtterance = this.getLastAssistantUtterance();
+      const shortAcknowledgement = isLikelyShortAcknowledgement(humanSaid);
+      const lastAssistantQuestion = lastAssistantUtterance
+        ? extractMostRecentQuestion(lastAssistantUtterance)
+        : undefined;
+      const response = await this.conversationAI.respond(humanSaid, {
+        shortAcknowledgement,
+        lastAssistantUtterance,
+        lastAssistantQuestion,
+      });
       this.log(`[AI] Response ready (${Date.now() - responseStart}ms, ${response?.length || 0} chars)`);
 
       if (response === null) {
@@ -483,6 +492,16 @@ export class CallSession extends EventEmitter {
     } finally {
       this.isProcessingResponse = false;
     }
+  }
+
+  private getLastAssistantUtterance(): string | undefined {
+    for (let i = this.state.transcript.length - 1; i >= 0; i--) {
+      const entry = this.state.transcript[i];
+      if (entry.role === 'assistant' && entry.text.trim()) {
+        return entry.text.trim();
+      }
+    }
+    return undefined;
   }
 
   /**

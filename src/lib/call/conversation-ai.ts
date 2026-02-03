@@ -16,6 +16,56 @@ export interface ConversationConfig {
   model?: string;
 }
 
+export interface TurnContext {
+  shortAcknowledgement?: boolean;
+  lastAssistantUtterance?: string;
+  lastAssistantQuestion?: string;
+}
+
+const SHORT_ACK_VALUES = new Set([
+  'yes',
+  'yeah',
+  'yep',
+  'yup',
+  'sure',
+  'ok',
+  'okay',
+  'true',
+  'correct',
+  'right',
+  'no',
+  'nope',
+  'nah',
+  'mmhmm',
+  'mhm',
+  'uhhuh',
+]);
+
+export function isLikelyShortAcknowledgement(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  const words = normalized.split(' ');
+  if (words.length > 4) return false;
+  return words.every((word) => SHORT_ACK_VALUES.has(word));
+}
+
+export function extractMostRecentQuestion(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || !trimmed.includes('?')) return undefined;
+
+  const segments = trimmed
+    .split(/(?<=[?!.])\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const question = [...segments].reverse().find((segment) => segment.includes('?'));
+  return question;
+}
+
 const SYSTEM_PROMPT = `You are an AI assistant making a phone call on behalf of a customer. YOU are the caller seeking assistance - the person who answers is the one providing service to you.
 
 CRITICAL ROLE REMINDER - READ THIS CAREFULLY:
@@ -74,6 +124,7 @@ CONVERSATION GUIDELINES:
 6. If asked to hold, say "Sure, I'll hold"
 7. Keep most turns under ~30 words (except when spelling an email/phone)
 8. Ask only ONE question per turn unless absolutely necessary
+9. If the human gives a very short acknowledgement ("yes", "sure", "true"), treat it as answering your most recent question and move to the next step
 
 AVOID REPETITION:
 - Once you've stated the dates, price, or room name, don't keep repeating them
@@ -155,12 +206,33 @@ Generate a brief greeting to start the call. Remember:
   /**
    * Generate a response to what the human said
    */
-  async respond(humanSaid: string): Promise<string | null> {
+  async respond(humanSaid: string, turnContext?: TurnContext): Promise<string | null> {
     if (this.isComplete) {
       return null;
     }
 
-    return this.generateResponse(humanSaid);
+    if (!turnContext?.shortAcknowledgement) {
+      return this.generateResponse(humanSaid);
+    }
+
+    const contextLines: string[] = [
+      '[TURN CONTEXT]',
+      'The human gave a short acknowledgement likely answering your most recent question.',
+    ];
+
+    if (turnContext.lastAssistantQuestion) {
+      contextLines.push(`Most recent question you asked: "${turnContext.lastAssistantQuestion}"`);
+    } else if (turnContext.lastAssistantUtterance) {
+      contextLines.push(`Your previous spoken turn: "${turnContext.lastAssistantUtterance}"`);
+    }
+
+    contextLines.push(
+      'Interpret the acknowledgement as a direct answer to your latest question, then proceed to exactly one next question without rehashing earlier context.',
+      '',
+      `Human said: ${humanSaid}`,
+    );
+
+    return this.generateResponse(contextLines.join('\n'));
   }
 
   /**

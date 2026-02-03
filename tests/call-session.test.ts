@@ -6,6 +6,12 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const mockConversationAi = vi.hoisted(() => ({
+  getGreeting: vi.fn().mockResolvedValue('Hello, this is an AI assistant.'),
+  respond: vi.fn().mockResolvedValue('Thank you for your response.'),
+  instances: [] as any[],
+}));
+
 // Mock the providers before importing CallSession
 vi.mock('../src/lib/call/providers/deepgram.js', () => {
   return {
@@ -61,12 +67,28 @@ vi.mock('../src/lib/call/providers/twilio.js', () => ({
 
 vi.mock('../src/lib/call/conversation-ai.js', () => {
   class MockConversationAI {
-    getGreeting = vi.fn().mockResolvedValue('Hello, this is an AI assistant.');
-    respond = vi.fn().mockResolvedValue('Thank you for your response.');
+    getGreeting = mockConversationAi.getGreeting;
+    respond = mockConversationAi.respond;
     complete = false;
+    constructor() {
+      mockConversationAi.instances.push(this);
+    }
   }
   return {
     ConversationAI: MockConversationAI,
+    isLikelyShortAcknowledgement: vi.fn((text: string) => {
+      const normalized = text
+        .trim()
+        .toLowerCase()
+        .replace(/[^\w\s]/g, '');
+      return ['yes', 'sure', 'true', 'ok', 'okay', 'no'].includes(normalized);
+    }),
+    extractMostRecentQuestion: vi.fn((text: string) => {
+      const idx = text.lastIndexOf('?');
+      if (idx === -1) return undefined;
+      const start = text.lastIndexOf('.', idx);
+      return text.slice(start === -1 ? 0 : start + 1, idx + 1).trim();
+    }),
   };
 });
 
@@ -138,6 +160,9 @@ describe('CallSession', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     logMessages = [];
+    mockConversationAi.instances = [];
+    mockConversationAi.getGreeting.mockResolvedValue('Hello, this is an AI assistant.');
+    mockConversationAi.respond.mockResolvedValue('Thank you for your response.');
 
     // Intercept console.log to capture error messages
     console.log = (...args: any[]) => {
@@ -306,6 +331,39 @@ describe('CallSession', () => {
         (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('I need a room'),
       );
       expect(acceptedHuman).toBeDefined();
+    });
+
+    it('should pass short-ack turn context to ConversationAI based on latest assistant question', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+
+      mockConversationAi.getGreeting.mockResolvedValue(
+        'Hi, this is an AI assistant. Would you be able to offer a better direct rate?',
+      );
+      mockConversationAi.respond.mockResolvedValue('Great, what direct price can you offer?');
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+      await vi.advanceTimersByTimeAsync(1700); // greeting delay + post-TTS suppression window
+
+      mockSTT.emit('transcript', { text: 'Yes.', isFinal: true });
+      await vi.advanceTimersByTimeAsync(1200); // debounce + response
+
+      expect(mockConversationAi.respond).toHaveBeenCalled();
+      const [humanText, turnContext] = mockConversationAi.respond.mock.calls.at(-1) as [
+        string,
+        {
+          shortAcknowledgement: boolean;
+          lastAssistantUtterance?: string;
+          lastAssistantQuestion?: string;
+        },
+      ];
+      expect(humanText).toBe('Yes.');
+      expect(turnContext.shortAcknowledgement).toBe(true);
+      expect(turnContext.lastAssistantQuestion).toContain('Would you be able to offer a better direct rate?');
+      expect(turnContext.lastAssistantUtterance).toContain('Would you be able to offer a better direct rate?');
     });
   });
 });
