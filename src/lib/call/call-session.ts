@@ -6,6 +6,7 @@
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import { mulawToPcm } from './audio/mulaw.js';
+import { calculateRms } from './audio/pcm-utils.js';
 import { createStreamingDecoder, type StreamingDecoder } from './audio/streaming-decoder.js';
 import type {
   CallConfig,
@@ -29,6 +30,11 @@ export interface CallSessionEvents {
 const GREETING_DELAY_MS = 500;
 const CALL_COMPLETION_DELAY_MS = 3000;
 const POST_TTS_STT_SUPPRESSION_MS = 900;
+const PRE_GREETING_IDLE_MS = 1200;
+const MAX_BUFFERED_STT_CHUNKS = 500;
+const PRE_GREETING_VAD_RMS_THRESHOLD = 0.015;
+const PRE_GREETING_VAD_MIN_CONSECUTIVE_CHUNKS = 2;
+const MAX_GREETING_DEFERRAL_MS = 8000;
 
 export class CallSession extends EventEmitter {
   readonly callId: string;
@@ -49,9 +55,17 @@ export class CallSession extends EventEmitter {
   private responseDebounceTimer: NodeJS.Timeout | null = null; // Debounce rapid transcripts
   private pendingTranscript: string = ''; // Accumulated transcript before responding
   private hangupTimer: NodeJS.Timeout | null = null; // Timer for delayed hangup
+  private greetingTimer: NodeJS.Timeout | null = null; // Timer for delayed initial greeting
   private cleanedUp = false; // Prevent multiple cleanup calls
+  private endedEmitted = false;
   private suppressSttUntilMs = 0; // Prevent echo from AI audio being transcribed as human speech
   private sttTimelineStartMs = 0; // Wall-clock anchor for Deepgram word timestamps
+  private greetingStarted = false;
+  private lastInboundTranscriptAtMs = 0;
+  private lastInboundAudioActivityAtMs = 0;
+  private consecutiveInboundSpeechChunks = 0;
+  private callConnectedAtMs = 0;
+  private bufferedSttAudio: Buffer[] = [];
 
   // Event handler references for cleanup
   private sttHandlers: { event: string; handler: (...args: any[]) => void }[] = [];
@@ -190,6 +204,14 @@ export class CallSession extends EventEmitter {
       await this.stt.connect();
       this.log('[STT] Connection established');
       this.sttTimelineStartMs = Date.now();
+
+      if (this.bufferedSttAudio.length > 0) {
+        this.log(`[STT] Flushing ${this.bufferedSttAudio.length} buffered audio chunk(s)`);
+        for (const pcm of this.bufferedSttAudio) {
+          this.stt.sendAudio(pcm);
+        }
+        this.bufferedSttAudio = [];
+      }
     } catch (err) {
       this.log(`[STT] Connection failed: ${err}`);
       throw err;
@@ -270,45 +292,14 @@ export class CallSession extends EventEmitter {
         if (msg.start) {
           this.streamSid = msg.start.streamSid;
           this.state.callSid = msg.start.callSid;
+          this.callConnectedAtMs = Date.now();
           this.log(`[Session] Stream started - streamSid: ${this.streamSid}`);
           this.updateStatus('in-progress');
           this.emitMessage({ type: 'call_connected', callId: this.callId });
 
-          // Send AI-generated greeting after a short delay to ensure audio is ready
-          setTimeout(async () => {
-            if (this.cleanedUp) return; // Don't send greeting if session was cleaned up
-            try {
-              this.log('[AI] Generating greeting...');
-              const greeting = await this.conversationAI.getGreeting();
-              this.log(`[AI] Greeting: "${greeting}"`);
-              await this.speak(greeting);
-            } catch (err) {
-              const message = this.formatError(err);
-              this.log(`[AI] Greeting error: ${message}`);
-              this.emitMessage({
-                type: 'error',
-                callId: this.callId,
-                message: this.isElevenLabsQuotaExceeded(err)
-                  ? this.getTTSOperatorMessage(err)
-                  : `Greeting generation failed: ${message}`,
-              });
-              if (this.isElevenLabsQuotaExceeded(err)) {
-                await this.hangup();
-                return;
-              }
-              // Fallback to basic greeting
-              const fallback = `Hello! I'm calling about: ${this.state.goal}`;
-              this.speak(fallback).catch((e) => {
-                const fallbackMessage = this.getTTSOperatorMessage(e);
-                this.log(`[AI] Fallback error: ${fallbackMessage}`);
-                this.emitMessage({
-                  type: 'error',
-                  callId: this.callId,
-                  message: fallbackMessage,
-                });
-              });
-            }
-          }, GREETING_DELAY_MS);
+          // Send AI-generated greeting after a short delay to ensure audio is ready.
+          // If the remote party speaks first (common with IVRs), we delay greeting.
+          this.scheduleInitialGreeting(GREETING_DELAY_MS);
         }
         break;
 
@@ -317,10 +308,16 @@ export class CallSession extends EventEmitter {
           // Convert mulaw to PCM and send to STT (accept any track for now)
           const mulaw = Buffer.from(msg.media.payload, 'base64');
           const pcm = mulawToPcm(mulaw);
+          if (!this.greetingStarted && !this.isSpeaking) {
+            this.trackInboundSpeechActivity(pcm);
+          }
           if (this.stt?.connected) {
             this.stt.sendAudio(pcm);
           } else {
-            this.log('[STT] Not connected, dropping audio');
+            if (this.bufferedSttAudio.length >= MAX_BUFFERED_STT_CHUNKS) {
+              this.bufferedSttAudio.shift();
+            }
+            this.bufferedSttAudio.push(pcm);
           }
         }
         break;
@@ -348,7 +345,13 @@ export class CallSession extends EventEmitter {
    * Handle transcription results from Deepgram
    */
   private handleTranscript(result: TranscriptResult): void {
-    if (!result.text.trim()) return;
+    const text = result.text.trim();
+    if (!text) return;
+
+    // IVRs often speak immediately after answer; avoid talking over them.
+    if (!this.greetingStarted) {
+      this.lastInboundTranscriptAtMs = Date.now();
+    }
 
     const transcriptEndMs = this.getTranscriptEndTimestampMs(result);
     if (transcriptEndMs !== undefined && transcriptEndMs <= this.suppressSttUntilMs) {
@@ -359,7 +362,7 @@ export class CallSession extends EventEmitter {
     // Prevent AI voice playback/echo from being treated as human speech.
     // This intentionally drops barge-in during playback to avoid self-transcription loops.
     if (this.isSpeaking || Date.now() < this.suppressSttUntilMs) {
-      this.log(`[STT] Ignoring likely echo while AI audio is active: "${result.text}"`);
+      this.log(`[STT] Ignoring likely echo while AI audio is active: "${text}"`);
       return;
     }
 
@@ -368,7 +371,7 @@ export class CallSession extends EventEmitter {
     this.emitMessage({
       type: 'transcript',
       callId: this.callId,
-      text: result.text,
+      text,
       role: 'human',
       isFinal: result.isFinal,
     });
@@ -383,9 +386,9 @@ export class CallSession extends EventEmitter {
 
       // Accumulate transcript segments
       if (this.pendingTranscript) {
-        this.pendingTranscript += ` ${result.text}`;
+        this.pendingTranscript += ` ${text}`;
       } else {
-        this.pendingTranscript = result.text;
+        this.pendingTranscript = text;
       }
       this.log(`[Turn] Accumulated: "${this.pendingTranscript}"`);
 
@@ -416,6 +419,92 @@ export class CallSession extends EventEmitter {
           this.generateAIResponse(fullTranscript);
         }
       }, CallSession.RESPONSE_DEBOUNCE_MS);
+    }
+  }
+
+  private trackInboundSpeechActivity(pcm: Buffer): void {
+    const rms = calculateRms(pcm);
+    if (rms >= PRE_GREETING_VAD_RMS_THRESHOLD) {
+      this.consecutiveInboundSpeechChunks++;
+      if (this.consecutiveInboundSpeechChunks >= PRE_GREETING_VAD_MIN_CONSECUTIVE_CHUNKS) {
+        this.lastInboundAudioActivityAtMs = Date.now();
+      }
+    } else {
+      this.consecutiveInboundSpeechChunks = 0;
+    }
+  }
+
+  private scheduleInitialGreeting(delayMs: number): void {
+    if (this.greetingStarted || this.cleanedUp) return;
+    if (this.greetingTimer) {
+      clearTimeout(this.greetingTimer);
+    }
+
+    this.greetingTimer = setTimeout(() => {
+      this.greetingTimer = null;
+      this.sendInitialGreeting().catch((err) => {
+        this.log(`[AI] Greeting error: ${this.formatError(err)}`);
+      });
+    }, delayMs);
+  }
+
+  private async sendInitialGreeting(): Promise<void> {
+    if (this.greetingStarted || this.cleanedUp) return;
+
+    const lastInboundActivityAtMs = Math.max(this.lastInboundTranscriptAtMs, this.lastInboundAudioActivityAtMs);
+    if (lastInboundActivityAtMs) {
+      const elapsed = Date.now() - lastInboundActivityAtMs;
+      const callElapsed = this.callConnectedAtMs ? Date.now() - this.callConnectedAtMs : 0;
+      if (elapsed < PRE_GREETING_IDLE_MS) {
+        if (callElapsed >= MAX_GREETING_DEFERRAL_MS) {
+          this.log('[AI] Greeting deferral timeout reached; proceeding');
+        } else {
+          this.log(`[AI] Deferring greeting; remote speech detected ${elapsed}ms ago`);
+          this.scheduleInitialGreeting(PRE_GREETING_IDLE_MS - elapsed);
+          return;
+        }
+      }
+    }
+
+    if (this.pendingTranscript || this.state.transcript.some((entry) => entry.role === 'human') || this.isProcessingResponse) {
+      this.log('[AI] Skipping initial greeting because remote party spoke first');
+      this.greetingStarted = true;
+      return;
+    }
+
+    this.greetingStarted = true;
+
+    try {
+      this.log('[AI] Generating greeting...');
+      const greeting = await this.conversationAI.getGreeting();
+      this.log(`[AI] Greeting: "${greeting}"`);
+      await this.speak(greeting);
+    } catch (err) {
+      const message = this.formatError(err);
+      this.log(`[AI] Greeting error: ${message}`);
+      this.emitMessage({
+        type: 'error',
+        callId: this.callId,
+        message: this.isElevenLabsQuotaExceeded(err)
+          ? this.getTTSOperatorMessage(err)
+          : `Greeting generation failed: ${message}`,
+      });
+      if (this.isElevenLabsQuotaExceeded(err)) {
+        await this.hangup();
+        return;
+      }
+
+      // Fallback to basic greeting.
+      const fallback = `Hello! I'm calling about: ${this.state.goal}`;
+      this.speak(fallback).catch((fallbackErr) => {
+        const fallbackMessage = this.getTTSOperatorMessage(fallbackErr);
+        this.log(`[AI] Fallback error: ${fallbackMessage}`);
+        this.emitMessage({
+          type: 'error',
+          callId: this.callId,
+          message: fallbackMessage,
+        });
+      });
     }
   }
 
@@ -702,6 +791,14 @@ export class CallSession extends EventEmitter {
     this.emitEnded();
   }
 
+  endFromProviderStatus(status: CallStatus): void {
+    if (this.endedEmitted) return;
+    this.log(`[Session] Ending from provider status: ${status}`);
+    this.updateStatus(status);
+    this.cleanup();
+    this.emitEnded();
+  }
+
   /**
    * Handle media stream close
    */
@@ -730,6 +827,10 @@ export class CallSession extends EventEmitter {
     if (this.hangupTimer) {
       clearTimeout(this.hangupTimer);
       this.hangupTimer = null;
+    }
+    if (this.greetingTimer) {
+      clearTimeout(this.greetingTimer);
+      this.greetingTimer = null;
     }
 
     // Stop decoder
@@ -768,6 +869,7 @@ export class CallSession extends EventEmitter {
     this.mediaWsHandlers = [];
 
     this.streamSid = null;
+    this.bufferedSttAudio = [];
     this.state.endedAt = new Date();
   }
 
@@ -796,6 +898,9 @@ export class CallSession extends EventEmitter {
    * Emit ended event
    */
   private emitEnded(): void {
+    if (this.endedEmitted) return;
+    this.endedEmitted = true;
+
     const summary = this.generateSummary();
     this.state.summary = summary;
 

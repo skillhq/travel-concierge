@@ -19,6 +19,8 @@ import { loadConfig } from '../lib/config.js';
 
 const NGROK_START_TIMEOUT_MS = 20000;
 const SERVER_START_TIMEOUT_MS = 25000;
+const PUBLIC_WEBHOOK_STABILITY_WINDOW_MS = 25000;
+const PUBLIC_WEBHOOK_STABILITY_PROBE_INTERVAL_MS = 2500;
 
 interface ManagedInfraRuntime {
   enabled: boolean;
@@ -162,12 +164,39 @@ async function startManagedInfra(
     );
     pipeProcessLogs(runtime.server, serverLogPath);
     await waitForServerReady(port, runtime.server, SERVER_START_TIMEOUT_MS);
+    await verifyPublicWebhookStability(publicUrl, PUBLIC_WEBHOOK_STABILITY_WINDOW_MS);
 
     return { ...runtime, publicUrl };
   } catch (error) {
     await stopProcess(runtime.server, 2000);
     await stopProcess(runtime.ngrok, 2000);
     throw error;
+  }
+}
+
+async function verifyPublicWebhookStability(publicUrl: string, durationMs: number): Promise<void> {
+  const deadline = Date.now() + durationMs;
+  let probe = 0;
+
+  while (Date.now() < deadline) {
+    probe += 1;
+    const healthResponse = await fetch(`${publicUrl}/health`);
+    if (!healthResponse.ok) {
+      throw new Error(`Public webhook stability check failed: ${publicUrl}/health returned ${healthResponse.status}.`);
+    }
+
+    const statusResponse = await fetch(`${publicUrl}/twilio/status?callId=preflight-stability-${probe}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'CallSid=CApreflight&CallStatus=ringing',
+    });
+    if (!statusResponse.ok) {
+      throw new Error(
+        `Public webhook stability check failed: ${publicUrl}/twilio/status returned ${statusResponse.status}.`,
+      );
+    }
+
+    await delay(PUBLIC_WEBHOOK_STABILITY_PROBE_INTERVAL_MS);
   }
 }
 
@@ -335,6 +364,10 @@ Phone: ${options.customerPhone}${options.context ? `\n${options.context}` : ''}`
     ws.on('close', () => {
       if (!callEnded && opened) {
         console.log(colors.warning('Connection closed'));
+        if (callId) {
+          safeReject(new Error('Lost connection to call server before call ended.'));
+          return;
+        }
       }
       safeResolve();
     });

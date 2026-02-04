@@ -88,6 +88,7 @@ export async function initiateCall(config: CallConfig, toNumber: string, callId:
     to: toNumber,
     from: config.twilioPhoneNumber,
     url: twimlUrl,
+    method: 'POST',
     statusCallback: statusCallbackUrl,
     statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
     statusCallbackMethod: 'POST',

@@ -3,7 +3,15 @@
  */
 
 // Call status states
-export type CallStatus = 'initiating' | 'ringing' | 'in-progress' | 'completed' | 'failed' | 'busy' | 'no-answer';
+export type CallStatus =
+  | 'initiating'
+  | 'ringing'
+  | 'in-progress'
+  | 'completed'
+  | 'failed'
+  | 'busy'
+  | 'no-answer'
+  | 'canceled';
 
 // Call configuration
 export interface CallConfig {
@@ -115,7 +123,7 @@ export interface TwilioVoiceWebhook {
   AccountSid: string;
   From: string;
   To: string;
-  CallStatus: 'queued' | 'ringing' | 'in-progress' | 'completed' | 'busy' | 'failed' | 'no-answer';
+  CallStatus: 'queued' | 'ringing' | 'in-progress' | 'completed' | 'busy' | 'failed' | 'no-answer' | 'canceled';
   ApiVersion: string;
   Direction: 'inbound' | 'outbound-api' | 'outbound-dial';
   ForwardedFrom?: string;

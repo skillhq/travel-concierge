@@ -139,6 +139,18 @@ function createStartMessage(callId = 'test-call-id'): TwilioMediaMessage {
   };
 }
 
+function createMediaMessage(payload: Buffer, chunk = '1', timestamp = '0'): TwilioMediaMessage {
+  return {
+    event: 'media',
+    media: {
+      track: 'inbound',
+      chunk,
+      timestamp,
+      payload: payload.toString('base64'),
+    },
+  };
+}
+
 describe('CallSession', () => {
   const mockConfig = {
     twilioAccountSid: 'test-sid',
@@ -215,7 +227,7 @@ describe('CallSession', () => {
       (mockSTT.connect as ReturnType<typeof vi.fn>).mockImplementation(() => {
         return new Promise((resolve) => setTimeout(resolve, 800));
       });
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       // Start initialization (don't await yet)
       const initPromise = session.initializeMediaStream(mockWs as any, startMessage);
@@ -261,13 +273,92 @@ describe('CallSession', () => {
         sttConnectStarted = true;
         return Promise.resolve();
       });
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any);
 
       // WebSocket handlers should be attached BEFORE STT connect starts
       // This is required to capture early Twilio media frames
       expect(handlersAttachedBeforeSTTConnect).toBe(true);
+    });
+
+    it('should buffer media received before STT connects and flush it once connected', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+      const mockWs = createMockWebSocket();
+
+      const mockSTT = createPhoneCallSTT('test-key');
+      let resolveConnect: (() => void) | null = null;
+      (mockSTT as { connected: boolean }).connected = false;
+      (mockSTT.connect as ReturnType<typeof vi.fn>).mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveConnect = () => {
+              (mockSTT as { connected: boolean }).connected = true;
+              resolve();
+            };
+          }),
+      );
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      const initPromise = session.initializeMediaStream(mockWs as any);
+
+      const earlyMedia: TwilioMediaMessage = {
+        event: 'media',
+        media: {
+          track: 'inbound',
+          chunk: '1',
+          timestamp: '0',
+          payload: Buffer.from([0xff, 0x7f, 0x00, 0x80]).toString('base64'),
+        },
+      };
+      mockWs.emit('message', Buffer.from(JSON.stringify(earlyMedia)));
+      expect(mockSTT.sendAudio).not.toHaveBeenCalled();
+
+      resolveConnect?.();
+      await initPromise;
+      expect(mockSTT.sendAudio).toHaveBeenCalledTimes(1);
+    });
+
+    it('should defer greeting when the remote party speaks first', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+
+      mockSTT.emit('transcript', {
+        text: 'Thank you for calling. For reservations, press one.',
+        isFinal: false,
+        confidence: 0.9,
+      });
+
+      await vi.advanceTimersByTimeAsync(520);
+      expect(mockConversationAi.getGreeting).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockConversationAi.getGreeting).toHaveBeenCalledTimes(1);
+    });
+
+    it('should defer greeting when inbound audio activity is detected even without transcript text', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+
+      // Loud µ-law bytes simulate IVR speech energy before STT produces text.
+      mockWs.emit('message', Buffer.from(JSON.stringify(createMediaMessage(Buffer.alloc(160, 0x00), '1', '0'))));
+      mockWs.emit('message', Buffer.from(JSON.stringify(createMediaMessage(Buffer.alloc(160, 0x00), '2', '20'))));
+
+      await vi.advanceTimersByTimeAsync(520);
+      expect(mockConversationAi.getGreeting).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockConversationAi.getGreeting).toHaveBeenCalledTimes(1);
     });
 
     it('should ignore transcript echoes while TTS is still speaking', async () => {
@@ -279,7 +370,7 @@ describe('CallSession', () => {
       session.on('message', (msg) => serverMessages.push(msg));
 
       const mockSTT = createPhoneCallSTT('test-key');
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       const mockTTS = createPhoneCallTTS('test-elevenlabs-key', 'voice-id');
       (mockTTS.speak as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -310,7 +401,7 @@ describe('CallSession', () => {
       session.on('message', (msg) => serverMessages.push(msg));
 
       const mockSTT = createPhoneCallSTT('test-key');
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any, startMessage);
       await vi.advanceTimersByTimeAsync(900); // greeting completes and suppression window starts
@@ -342,7 +433,7 @@ describe('CallSession', () => {
       session.on('message', (msg) => serverMessages.push(msg));
 
       const mockSTT = createPhoneCallSTT('test-key');
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any, startMessage);
       await vi.advanceTimersByTimeAsync(1700); // move beyond normal post-TTS suppression
@@ -367,7 +458,7 @@ describe('CallSession', () => {
       const mockWs = createMockWebSocket();
       const startMessage = createStartMessage();
       const mockSTT = createPhoneCallSTT('test-key');
-      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValue(mockSTT);
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       mockConversationAi.getGreeting.mockResolvedValue(
         'Hi, this is an AI assistant. Would you be able to offer a better direct rate?',

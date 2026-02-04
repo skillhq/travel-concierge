@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { CallSession } from './call-session.js';
-import type { CallConfig, CallState, ClientMessage, ServerMessage } from './call-types.js';
+import type { CallConfig, CallState, CallStatus, ClientMessage, ServerMessage } from './call-types.js';
 import { preflightDeepgramSTT } from './providers/deepgram.js';
 import { preflightElevenLabsTTSBudget } from './providers/elevenlabs.js';
 import { preflightFfmpeg } from './providers/local-deps.js';
@@ -15,6 +15,7 @@ import {
   formatPhoneNumber,
   generateErrorTwiml,
   generateMediaStreamsTwiml,
+  getCallStatus,
   initiateCall,
   parseWebhookBody,
   preflightTwilioCallSetup,
@@ -27,6 +28,9 @@ const MAX_BODY_SIZE = 1024 * 1024;
 const MAX_PHONE_LENGTH = 20;
 const MAX_GOAL_LENGTH = 1000;
 const MAX_CONTEXT_LENGTH = 5000;
+const TERMINAL_CALL_STATUSES = new Set(['completed', 'busy', 'failed', 'no-answer', 'canceled']);
+const STATUS_RECONCILE_INTERVAL_MS = 10000;
+const PUBLIC_WEBHOOK_PREFLIGHT_TIMEOUT_MS = 6000;
 
 export interface CallServerOptions {
   port: number;
@@ -49,6 +53,11 @@ export class CallServer extends EventEmitter {
   private readonly options: CallServerOptions;
   private readonly sessions: Map<string, CallSession> = new Map();
   private readonly controlClients: Set<WebSocket> = new Set();
+  private statusReconcileTimer: NodeJS.Timeout | null = null;
+
+  private isPreflightCallId(callId: string | null): boolean {
+    return !!callId && callId.startsWith('preflight-');
+  }
 
   constructor(options: CallServerOptions) {
     super();
@@ -114,6 +123,7 @@ export class CallServer extends EventEmitter {
         this.server.listen(this.options.port, () => {
           this.log(`Call server listening on port ${this.options.port}`);
           this.log(`Public URL: ${this.options.publicUrl}`);
+          this.startStatusReconcileLoop();
           this.emit('started');
           resolve();
         });
@@ -132,6 +142,11 @@ export class CallServer extends EventEmitter {
    * Stop the server
    */
   async stop(): Promise<void> {
+    if (this.statusReconcileTimer) {
+      clearInterval(this.statusReconcileTimer);
+      this.statusReconcileTimer = null;
+    }
+
     // End all active calls
     for (const session of this.sessions.values()) {
       await session.hangup();
@@ -187,13 +202,14 @@ export class CallServer extends EventEmitter {
       this.handleStatusCheck(res);
     } else if (method === 'POST' && url.pathname === '/call') {
       this.handleCallRequest(req, res);
-    } else if (method === 'POST' && url.pathname === '/twilio/voice') {
+    } else if ((method === 'POST' || method === 'GET') && url.pathname === '/twilio/voice') {
       this.handleTwilioVoice(req, res, url);
-    } else if (method === 'POST' && url.pathname === '/twilio/status') {
+    } else if ((method === 'POST' || method === 'GET') && url.pathname === '/twilio/status') {
       this.handleTwilioStatus(req, res, url);
     } else if (method === 'GET' && url.pathname.startsWith('/status/')) {
       this.handleCallStatusCheck(res, url.pathname.split('/').pop() ?? '');
     } else {
+      this.warn(`[HTTP] Unhandled request ${method} ${url.pathname}`);
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
     }
@@ -321,6 +337,11 @@ export class CallServer extends EventEmitter {
       const signature = req.headers['x-twilio-signature'] as string | undefined;
       const webhookUrl = `${this.options.publicUrl}${req.url}`;
       const params = parseWebhookBody(body);
+      const callId = url.searchParams.get('callId');
+
+      this.log(
+        `[Twilio] /voice webhook received callId=${callId ?? 'missing'} signature=${signature ? 'present' : 'missing'}`,
+      );
 
       if (
         signature &&
@@ -337,9 +358,10 @@ export class CallServer extends EventEmitter {
         return;
       }
 
-      const callId = url.searchParams.get('callId');
-
       if (!callId || !this.sessions.has(callId)) {
+        if (!this.isPreflightCallId(callId)) {
+          this.warn(`[Twilio] /voice webhook has unknown callId=${callId ?? 'missing'}`);
+        }
         res.writeHead(200, { 'Content-Type': 'application/xml' });
         res.end(generateErrorTwiml('Sorry, this call cannot be connected. Please try again later.'));
         return;
@@ -392,23 +414,40 @@ export class CallServer extends EventEmitter {
       const callId = url.searchParams.get('callId');
       const webhook = params;
       const session = callId ? this.sessions.get(callId) : null;
+      const status = webhook.CallStatus;
+
+      this.log(
+        `[Twilio] /status callback callId=${callId ?? 'missing'} status=${status ?? 'unknown'} callSid=${
+          webhook.CallSid ?? 'unknown'
+        }`,
+      );
 
       if (session) {
-        switch (webhook.CallStatus) {
+        switch (status) {
           case 'ringing':
             session.updateStatus('ringing');
             this.broadcastToControl({ type: 'call_ringing', callId: session.callId });
             break;
           case 'in-progress':
-            // Status is set when media stream connects
+            // Keep status in sync for cases where media stream never starts.
+            session.updateStatus('in-progress');
             break;
           case 'completed':
           case 'busy':
           case 'failed':
           case 'no-answer':
-            session.updateStatus(webhook.CallStatus);
+          case 'canceled':
+            session.endFromProviderStatus(status);
             break;
         }
+      } else if (callId) {
+        if (!this.isPreflightCallId(callId)) {
+          this.warn(`[Twilio] /status callback for unknown callId=${callId}`);
+        }
+      }
+
+      if (status && TERMINAL_CALL_STATUSES.has(status) && !session && !this.isPreflightCallId(callId)) {
+        this.warn(`[Twilio] Terminal status received without active session: ${status}`);
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -570,6 +609,12 @@ export class CallServer extends EventEmitter {
     this.log(`[Preflight] ${deepgramPreflight.message}`);
     this.log(`[Preflight] ${elevenLabsPreflight.message}`);
 
+    const publicWebhookPreflight = await this.preflightPublicWebhook();
+    if (!publicWebhookPreflight.ok) {
+      throw new Error(publicWebhookPreflight.message);
+    }
+    this.log(`[Preflight] ${publicWebhookPreflight.message}`);
+
     const callId = randomUUID();
     const formattedNumber = formatPhoneNumber(phoneNumber);
 
@@ -638,6 +683,119 @@ export class CallServer extends EventEmitter {
    */
   get isRunning(): boolean {
     return this.server !== null;
+  }
+
+  private startStatusReconcileLoop(): void {
+    if (this.statusReconcileTimer) {
+      clearInterval(this.statusReconcileTimer);
+    }
+    this.statusReconcileTimer = setInterval(() => {
+      this.reconcileStatusesWithProvider().catch((err) => {
+        this.warn(`[Twilio] Status reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, STATUS_RECONCILE_INTERVAL_MS);
+  }
+
+  private async reconcileStatusesWithProvider(): Promise<void> {
+    if (this.sessions.size === 0) return;
+
+    for (const session of this.sessions.values()) {
+      const state = session.getState();
+      const callSid = state.callSid;
+      if (!callSid) continue;
+      if (TERMINAL_CALL_STATUSES.has(state.status)) continue;
+
+      const providerStatus = await getCallStatus(this.options.config, callSid);
+      const normalized = providerStatus as
+        | 'queued'
+        | 'ringing'
+        | 'in-progress'
+        | 'completed'
+        | 'busy'
+        | 'failed'
+        | 'no-answer'
+        | 'canceled';
+
+      if (normalized === 'ringing' && state.status !== 'ringing') {
+        session.updateStatus('ringing');
+        this.broadcastToControl({ type: 'call_ringing', callId: state.callId });
+      } else if (normalized === 'in-progress' && state.status !== 'in-progress') {
+        session.updateStatus('in-progress');
+      } else if (normalized === 'completed' || normalized === 'busy' || normalized === 'failed' || normalized === 'no-answer' || normalized === 'canceled') {
+        const terminalStatus: CallStatus = normalized;
+        this.log(`[Twilio] Reconciled terminal status callId=${state.callId} status=${terminalStatus}`);
+        session.endFromProviderStatus(terminalStatus);
+      }
+    }
+  }
+
+  private async preflightPublicWebhook(): Promise<{ ok: boolean; message: string }> {
+    const publicUrl = this.options.publicUrl.replace(/\/+$/, '');
+    if (!publicUrl.startsWith('https://') && !publicUrl.startsWith('http://')) {
+      return {
+        ok: false,
+        message: `Public webhook preflight failed: invalid publicUrl "${this.options.publicUrl}".`,
+      };
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PUBLIC_WEBHOOK_PREFLIGHT_TIMEOUT_MS);
+    const preflightCallId = `preflight-${randomUUID().slice(0, 8)}`;
+
+    try {
+      const healthResponse = await fetch(`${publicUrl}/health`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!healthResponse.ok) {
+        return {
+          ok: false,
+          message: `Public webhook preflight failed: ${publicUrl}/health returned HTTP ${healthResponse.status}.`,
+        };
+      }
+
+      const voiceResponse = await fetch(`${publicUrl}/twilio/voice?callId=${encodeURIComponent(preflightCallId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'CallSid=CApreflight&CallStatus=ringing',
+        signal: controller.signal,
+      });
+      if (!voiceResponse.ok) {
+        return {
+          ok: false,
+          message: `Public webhook preflight failed: ${publicUrl}/twilio/voice returned HTTP ${voiceResponse.status}.`,
+        };
+      }
+
+      const statusResponse = await fetch(
+        `${publicUrl}/twilio/status?callId=${encodeURIComponent(preflightCallId)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'CallSid=CApreflight&CallStatus=ringing',
+          signal: controller.signal,
+        },
+      );
+      if (!statusResponse.ok) {
+        return {
+          ok: false,
+          message: `Public webhook preflight failed: ${publicUrl}/twilio/status returned HTTP ${statusResponse.status}.`,
+        };
+      }
+
+      return {
+        ok: true,
+        message: `Public webhook preflight passed: ${publicUrl} is reachable for Twilio voice and status callbacks.`,
+      };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        message: `Public webhook preflight failed: could not reach ${publicUrl} (${detail}).`,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
