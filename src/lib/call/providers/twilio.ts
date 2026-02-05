@@ -92,6 +92,8 @@ export async function initiateCall(config: CallConfig, toNumber: string, callId:
     statusCallback: statusCallbackUrl,
     statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
     statusCallbackMethod: 'POST',
+    // Wait up to 120 seconds for answer (default ~60s is too short for hold lines)
+    timeout: 120,
   });
 
   return {
