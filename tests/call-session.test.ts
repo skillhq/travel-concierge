@@ -114,6 +114,7 @@ vi.mock('../src/lib/call/audio/streaming-decoder.js', () => ({
 
 import { CallSession } from '../src/lib/call/call-session.js';
 import type { ServerMessage, TwilioMediaMessage } from '../src/lib/call/call-types.js';
+import { createStreamingDecoder } from '../src/lib/call/audio/streaming-decoder.js';
 import { createPhoneCallSTT } from '../src/lib/call/providers/deepgram.js';
 import { createPhoneCallTTS } from '../src/lib/call/providers/elevenlabs.js';
 
@@ -149,6 +150,11 @@ function createMediaMessage(payload: Buffer, chunk = '1', timestamp = '0'): Twil
       payload: payload.toString('base64'),
     },
   };
+}
+
+function getLatestMockTTSInstance(): { speak: ReturnType<typeof vi.fn> } {
+  const results = (createPhoneCallTTS as ReturnType<typeof vi.fn>).mock.results;
+  return results[results.length - 1]!.value as { speak: ReturnType<typeof vi.fn> };
 }
 
 describe('CallSession', () => {
@@ -314,8 +320,9 @@ describe('CallSession', () => {
       mockWs.emit('message', Buffer.from(JSON.stringify(earlyMedia)));
       expect(mockSTT.sendAudio).not.toHaveBeenCalled();
 
-      resolveConnect?.();
       await initPromise;
+      resolveConnect?.();
+      await Promise.resolve();
       expect(mockSTT.sendAudio).toHaveBeenCalledTimes(1);
     });
 
@@ -327,6 +334,7 @@ describe('CallSession', () => {
       (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any, startMessage);
+      const mockTTS = getLatestMockTTSInstance();
 
       mockSTT.emit('transcript', {
         text: 'Thank you for calling. For reservations, press one.',
@@ -334,11 +342,11 @@ describe('CallSession', () => {
         confidence: 0.9,
       });
 
-      await vi.advanceTimersByTimeAsync(520);
-      expect(mockConversationAi.getGreeting).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(280);
+      expect(mockTTS.speak).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(mockConversationAi.getGreeting).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(mockTTS.speak).toHaveBeenCalledTimes(1);
     });
 
     it('should defer greeting when inbound audio activity is detected even without transcript text', async () => {
@@ -349,16 +357,17 @@ describe('CallSession', () => {
       (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any, startMessage);
+      const mockTTS = getLatestMockTTSInstance();
 
       // Loud µ-law bytes simulate IVR speech energy before STT produces text.
       mockWs.emit('message', Buffer.from(JSON.stringify(createMediaMessage(Buffer.alloc(160, 0x00), '1', '0'))));
       mockWs.emit('message', Buffer.from(JSON.stringify(createMediaMessage(Buffer.alloc(160, 0x00), '2', '20'))));
 
-      await vi.advanceTimersByTimeAsync(520);
-      expect(mockConversationAi.getGreeting).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(280);
+      expect(mockTTS.speak).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(mockConversationAi.getGreeting).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(mockTTS.speak).toHaveBeenCalledTimes(1);
     });
 
     it('should ignore transcript echoes while TTS is still speaking', async () => {
@@ -390,6 +399,82 @@ describe('CallSession', () => {
         (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('Jennifer'),
       );
       expect(echoedHuman).toBeUndefined();
+    });
+
+    it('should retry once when TTS returns empty audio output', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const serverMessages: ServerMessage[] = [];
+      session.on('message', (msg) => serverMessages.push(msg));
+
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      const mockTTS = createPhoneCallTTS('test-elevenlabs-key', 'voice-id');
+      let attempts = 0;
+      (mockTTS.speak as ReturnType<typeof vi.fn>).mockImplementation(async (_text: string, requestId?: number) => {
+        attempts += 1;
+        if (attempts === 1) {
+          // Simulate provider responding without any usable audio.
+          mockTTS.emit('done', requestId);
+          return;
+        }
+        mockTTS.emit('audio', Buffer.from([0x01, 0x02, 0x03]), requestId);
+        mockTTS.emit('done', requestId);
+      });
+      (createPhoneCallTTS as ReturnType<typeof vi.fn>).mockReturnValue(mockTTS);
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+      await vi.advanceTimersByTimeAsync(1500);
+
+      expect(mockTTS.speak).toHaveBeenCalledTimes(2);
+      const assistantTurn = serverMessages.find(
+        (msg) => msg.type === 'transcript' && msg.role === 'assistant' && msg.text.includes('Hello, this is an AI assistant'),
+      );
+      expect(assistantTurn).toBeDefined();
+    });
+
+    it('should wait briefly for decoder flush before treating TTS output as empty', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+
+      const delayedDecoder = new EventEmitter();
+      (createStreamingDecoder as ReturnType<typeof vi.fn>).mockImplementationOnce(() =>
+        Object.assign(delayedDecoder, {
+          start: vi.fn(),
+          write: vi.fn().mockImplementation((chunk: Buffer) => {
+            setTimeout(() => delayedDecoder.emit('data', Buffer.from(chunk)), 50);
+            return true;
+          }),
+          end: vi.fn().mockImplementation(() => {
+            setTimeout(() => delayedDecoder.emit('close'), 60);
+          }),
+          stop: vi.fn().mockImplementation(() => {
+            delayedDecoder.emit('close');
+          }),
+          running: true,
+        }),
+      );
+
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      const mockTTS = createPhoneCallTTS('test-elevenlabs-key', 'voice-id');
+      (mockTTS.speak as ReturnType<typeof vi.fn>).mockImplementation(async (_text: string, requestId?: number) => {
+        mockTTS.emit('audio', Buffer.from([0x01, 0x02, 0x03]), requestId);
+        mockTTS.emit('done', requestId);
+      });
+      (createPhoneCallTTS as ReturnType<typeof vi.fn>).mockReturnValue(mockTTS);
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+      await vi.advanceTimersByTimeAsync(1200);
+
+      expect(mockTTS.speak).toHaveBeenCalledTimes(1);
+      expect(logMessages.some((msg) => msg.includes('Empty audio output, retrying synthesis'))).toBe(false);
     });
 
     it('should ignore transcript echoes briefly after TTS completes, then accept real speech', async () => {

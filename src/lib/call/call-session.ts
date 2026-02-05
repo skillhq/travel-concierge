@@ -27,14 +27,17 @@ export interface CallSessionEvents {
 }
 
 // Configurable timing constants
-const GREETING_DELAY_MS = 500;
+const GREETING_DELAY_MS = 250;
 const CALL_COMPLETION_DELAY_MS = 3000;
 const POST_TTS_STT_SUPPRESSION_MS = 900;
-const PRE_GREETING_IDLE_MS = 1200;
+const PRE_GREETING_IDLE_MS = 700;
 const MAX_BUFFERED_STT_CHUNKS = 500;
 const PRE_GREETING_VAD_RMS_THRESHOLD = 0.015;
 const PRE_GREETING_VAD_MIN_CONSECUTIVE_CHUNKS = 2;
-const MAX_GREETING_DEFERRAL_MS = 8000;
+const MAX_GREETING_DEFERRAL_MS = 2000;
+const TTS_EMPTY_AUDIO_MAX_RETRIES = 1;
+const TTS_EMPTY_AUDIO_RETRY_DELAY_MS = 200;
+const TTS_DECODER_FLUSH_GRACE_MS = 250;
 
 export class CallSession extends EventEmitter {
   readonly callId: string;
@@ -66,6 +69,7 @@ export class CallSession extends EventEmitter {
   private consecutiveInboundSpeechChunks = 0;
   private callConnectedAtMs = 0;
   private bufferedSttAudio: Buffer[] = [];
+  private greetingPrefetchPromise: Promise<string | null> | null = null;
 
   // Event handler references for cleanup
   private sttHandlers: { event: string; handler: (...args: any[]) => void }[] = [];
@@ -98,6 +102,11 @@ export class CallSession extends EventEmitter {
       return 'ElevenLabs quota exceeded: TTS cannot generate audio. Top up ElevenLabs credits and retry the call.';
     }
     return `TTS failed: ${this.formatError(error)}`;
+  }
+
+  private isEmptyTtsAudioError(error: unknown): boolean {
+    const message = this.formatError(error).toLowerCase();
+    return message.includes('tts produced no audio output');
   }
 
   constructor(callId: string, config: CallConfig, phoneNumber: string, goal: string, context?: string) {
@@ -200,22 +209,7 @@ export class CallSession extends EventEmitter {
       { event: 'close', handler: sttCloseHandler },
     ];
 
-    try {
-      await this.stt.connect();
-      this.log('[STT] Connection established');
-      this.sttTimelineStartMs = Date.now();
-
-      if (this.bufferedSttAudio.length > 0) {
-        this.log(`[STT] Flushing ${this.bufferedSttAudio.length} buffered audio chunk(s)`);
-        for (const pcm of this.bufferedSttAudio) {
-          this.stt.sendAudio(pcm);
-        }
-        this.bufferedSttAudio = [];
-      }
-    } catch (err) {
-      this.log(`[STT] Connection failed: ${err}`);
-      throw err;
-    }
+    this.connectSttInBackground();
 
     // Initialize TTS with streaming conversion
     this.log('[TTS] Setting up ElevenLabs (streaming mode)...');
@@ -296,6 +290,8 @@ export class CallSession extends EventEmitter {
           this.log(`[Session] Stream started - streamSid: ${this.streamSid}`);
           this.updateStatus('in-progress');
           this.emitMessage({ type: 'call_connected', callId: this.callId });
+
+          this.prefetchGreeting();
 
           // Send AI-generated greeting after a short delay to ensure audio is ready.
           // If the remote party speaks first (common with IVRs), we delay greeting.
@@ -448,6 +444,48 @@ export class CallSession extends EventEmitter {
     }, delayMs);
   }
 
+  private connectSttInBackground(): void {
+    void (async () => {
+      if (!this.stt) return;
+
+      try {
+        await this.stt.connect();
+        if (this.cleanedUp || !this.stt) return;
+
+        this.log('[STT] Connection established');
+        this.sttTimelineStartMs = Date.now();
+
+        if (this.bufferedSttAudio.length > 0) {
+          this.log(`[STT] Flushing ${this.bufferedSttAudio.length} buffered audio chunk(s)`);
+          for (const pcm of this.bufferedSttAudio) {
+            this.stt.sendAudio(pcm);
+          }
+          this.bufferedSttAudio = [];
+        }
+      } catch (err) {
+        if (this.cleanedUp) return;
+        const message = this.formatError(err);
+        this.log(`[STT] Connection failed: ${message}`);
+        this.emitMessage({
+          type: 'error',
+          callId: this.callId,
+          message: `STT connection failed: ${message}`,
+        });
+      }
+    })();
+  }
+
+  private prefetchGreeting(): void {
+    if (this.greetingPrefetchPromise) return;
+    this.greetingPrefetchPromise = this.conversationAI
+      .getGreeting()
+      .then((greeting) => greeting.trim() || null)
+      .catch((err) => {
+        this.log(`[AI] Greeting prefetch failed: ${this.formatError(err)}`);
+        return null;
+      });
+  }
+
   private async sendInitialGreeting(): Promise<void> {
     if (this.greetingStarted || this.cleanedUp) return;
 
@@ -476,7 +514,8 @@ export class CallSession extends EventEmitter {
 
     try {
       this.log('[AI] Generating greeting...');
-      const greeting = await this.conversationAI.getGreeting();
+      const prefetchedGreeting = this.greetingPrefetchPromise ? await this.greetingPrefetchPromise : null;
+      const greeting = prefetchedGreeting ?? (await this.conversationAI.getGreeting());
       this.log(`[AI] Greeting: "${greeting}"`);
       await this.speak(greeting);
     } catch (err) {
@@ -627,81 +666,108 @@ export class CallSession extends EventEmitter {
 
     // Reset streaming state
     this.audioQueue = [];
-    this.isSpeaking = true;
 
-    // Increment generation to track which decoder is current
-    this.decoderGeneration++;
-    const currentGeneration = this.decoderGeneration;
+    for (let attempt = 0; attempt <= TTS_EMPTY_AUDIO_MAX_RETRIES; attempt++) {
+      this.isSpeaking = true;
 
-    // Start ffmpeg decoder to convert MP3 → µ-law
-    // (ElevenLabs always returns MP3 regardless of output_format requested)
-    this.decoder = createStreamingDecoder();
+      // Increment generation to track which decoder is current
+      this.decoderGeneration++;
+      const currentGeneration = this.decoderGeneration;
 
-    let decoderChunks = 0;
-    let decoderBytes = 0;
-    this.decoder.on('data', (mulaw: Buffer) => {
-      // Only process data if this is still the current decoder
-      if (currentGeneration !== this.decoderGeneration) return;
+      // Start ffmpeg decoder to convert MP3 → µ-law
+      // (ElevenLabs always returns MP3 regardless of output_format requested)
+      this.decoder = createStreamingDecoder();
+      let resolveFirstChunk: (() => void) | null = null;
+      const firstChunkPromise = new Promise<void>((resolve) => {
+        resolveFirstChunk = resolve;
+      });
 
-      decoderChunks++;
-      decoderBytes += mulaw.length;
-      if (decoderChunks === 1) {
-        this.log(`[Decoder] First chunk: ${mulaw.length} bytes, first 4 bytes: ${mulaw.slice(0, 4).toString('hex')}`);
+      let decoderChunks = 0;
+      let decoderBytes = 0;
+      this.decoder.on('data', (mulaw: Buffer) => {
+        // Only process data if this is still the current decoder
+        if (currentGeneration !== this.decoderGeneration) return;
+
+        decoderChunks++;
+        decoderBytes += mulaw.length;
+        if (decoderChunks === 1) {
+          this.log(`[Decoder] First chunk: ${mulaw.length} bytes, first 4 bytes: ${mulaw.slice(0, 4).toString('hex')}`);
+          resolveFirstChunk?.();
+          resolveFirstChunk = null;
+        }
+        if (decoderChunks % 10 === 0) {
+          this.log(`[Decoder] ${decoderChunks} chunks, ${decoderBytes} bytes total`);
+        }
+        // Send µ-law directly to Twilio as it's decoded
+        this.sendAudioToTwilio(mulaw);
+      });
+
+      this.decoder.on('close', () => {
+        // Only update isSpeaking if this is the current decoder
+        if (currentGeneration === this.decoderGeneration) {
+          this.log('[Decoder] Closed, speech complete');
+          this.isSpeaking = false;
+          this.suppressSttUntilMs = Date.now() + POST_TTS_STT_SUPPRESSION_MS;
+        }
+      });
+
+      this.decoder.on('error', (err) => {
+        this.log(`[Decoder] Error: ${err}`);
+      });
+
+      this.decoder.start();
+
+      try {
+        // Start TTS
+        await this.tts.speak(text, currentGeneration);
+        if (decoderChunks === 0) {
+          // The decoder can lag behind the TTS "done" signal slightly; wait briefly before declaring empty output.
+          await Promise.race([
+            firstChunkPromise,
+            new Promise((resolve) => setTimeout(resolve, TTS_DECODER_FLUSH_GRACE_MS)),
+          ]);
+          if (decoderChunks === 0) {
+            throw new Error('TTS produced no audio output (decoder emitted 0 chunks)');
+          }
+        }
+
+        // Add to transcript only after TTS succeeds.
+        const entry: TranscriptEntry = {
+          role: 'assistant',
+          text,
+          timestamp: new Date(),
+          isFinal: true,
+        };
+        this.state.transcript.push(entry);
+
+        // Emit transcript event only when audio was actually produced.
+        this.emitMessage({
+          type: 'transcript',
+          callId: this.callId,
+          text,
+          role: 'assistant',
+          isFinal: true,
+        });
+        return;
+      } catch (err) {
+        // Ensure we don't leave a stalled decoder when synthesis fails.
+        if (currentGeneration === this.decoderGeneration) {
+          this.decoder?.stop();
+          this.isSpeaking = false;
+        }
+
+        const canRetry = this.isEmptyTtsAudioError(err) && attempt < TTS_EMPTY_AUDIO_MAX_RETRIES;
+        if (!canRetry) {
+          throw err;
+        }
+
+        const retryCount = attempt + 1;
+        this.log(`[TTS] Empty audio output, retrying synthesis (${retryCount}/${TTS_EMPTY_AUDIO_MAX_RETRIES})`);
+        this.tts.cancel();
+        await new Promise((resolve) => setTimeout(resolve, TTS_EMPTY_AUDIO_RETRY_DELAY_MS));
       }
-      if (decoderChunks % 10 === 0) {
-        this.log(`[Decoder] ${decoderChunks} chunks, ${decoderBytes} bytes total`);
-      }
-      // Send µ-law directly to Twilio as it's decoded
-      this.sendAudioToTwilio(mulaw);
-    });
-
-    this.decoder.on('close', () => {
-      // Only update isSpeaking if this is the current decoder
-      if (currentGeneration === this.decoderGeneration) {
-        this.log('[Decoder] Closed, speech complete');
-        this.isSpeaking = false;
-        this.suppressSttUntilMs = Date.now() + POST_TTS_STT_SUPPRESSION_MS;
-      }
-    });
-
-    this.decoder.on('error', (err) => {
-      this.log(`[Decoder] Error: ${err}`);
-    });
-
-    this.decoder.start();
-
-    try {
-      // Start TTS
-      await this.tts.speak(text, currentGeneration);
-      if (decoderChunks === 0) {
-        throw new Error('TTS produced no audio output (decoder emitted 0 chunks)');
-      }
-    } catch (err) {
-      // Ensure we don't leave a stalled decoder when synthesis fails.
-      if (currentGeneration === this.decoderGeneration) {
-        this.decoder?.stop();
-        this.isSpeaking = false;
-      }
-      throw err;
     }
-
-    // Add to transcript only after TTS succeeds.
-    const entry: TranscriptEntry = {
-      role: 'assistant',
-      text,
-      timestamp: new Date(),
-      isFinal: true,
-    };
-    this.state.transcript.push(entry);
-
-    // Emit transcript event only when audio was actually produced.
-    this.emitMessage({
-      type: 'transcript',
-      callId: this.callId,
-      text,
-      role: 'assistant',
-      isFinal: true,
-    });
+    throw new Error('TTS failed after retry attempts');
   }
 
   /**
