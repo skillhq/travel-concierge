@@ -504,7 +504,11 @@ export class CallSession extends EventEmitter {
       }
     }
 
-    if (this.pendingTranscript || this.state.transcript.some((entry) => entry.role === 'human') || this.isProcessingResponse) {
+    if (
+      this.pendingTranscript ||
+      this.state.transcript.some((entry) => entry.role === 'human') ||
+      this.isProcessingResponse
+    ) {
       this.log('[AI] Skipping initial greeting because remote party spoke first');
       this.greetingStarted = true;
       return;

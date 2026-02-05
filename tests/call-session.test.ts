@@ -431,7 +431,8 @@ describe('CallSession', () => {
 
       expect(mockTTS.speak).toHaveBeenCalledTimes(2);
       const assistantTurn = serverMessages.find(
-        (msg) => msg.type === 'transcript' && msg.role === 'assistant' && msg.text.includes('Hello, this is an AI assistant'),
+        (msg) =>
+          msg.type === 'transcript' && msg.role === 'assistant' && msg.text.includes('Hello, this is an AI assistant'),
       );
       expect(assistantTurn).toBeDefined();
     });

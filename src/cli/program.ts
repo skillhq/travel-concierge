@@ -2,8 +2,10 @@ import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import kleur from 'kleur';
 import { callCommand } from '../commands/call.js';
+import { checkAvailabilityCommand } from '../commands/check-availability.js';
 import { configCommand } from '../commands/config.js';
 import { findContactCommand } from '../commands/find-contact.js';
+import { searchCommand } from '../commands/search.js';
 import { serverCommand } from '../commands/server.js';
 import type { CliColors, CliContext } from './shared.js';
 
@@ -49,6 +51,8 @@ export function createProgram(): Command {
   configCommand(program, getContext);
   serverCommand(program, getContext);
   callCommand(program, getContext);
+  searchCommand(program, getContext);
+  checkAvailabilityCommand(program, getContext);
 
   return program;
 }

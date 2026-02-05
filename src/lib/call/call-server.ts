@@ -721,7 +721,13 @@ export class CallServer extends EventEmitter {
         this.broadcastToControl({ type: 'call_ringing', callId: state.callId });
       } else if (normalized === 'in-progress' && state.status !== 'in-progress') {
         session.updateStatus('in-progress');
-      } else if (normalized === 'completed' || normalized === 'busy' || normalized === 'failed' || normalized === 'no-answer' || normalized === 'canceled') {
+      } else if (
+        normalized === 'completed' ||
+        normalized === 'busy' ||
+        normalized === 'failed' ||
+        normalized === 'no-answer' ||
+        normalized === 'canceled'
+      ) {
         const terminalStatus: CallStatus = normalized;
         this.log(`[Twilio] Reconciled terminal status callId=${state.callId} status=${terminalStatus}`);
         session.endFromProviderStatus(terminalStatus);
@@ -767,15 +773,12 @@ export class CallServer extends EventEmitter {
         };
       }
 
-      const statusResponse = await fetch(
-        `${publicUrl}/twilio/status?callId=${encodeURIComponent(preflightCallId)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'CallSid=CApreflight&CallStatus=ringing',
-          signal: controller.signal,
-        },
-      );
+      const statusResponse = await fetch(`${publicUrl}/twilio/status?callId=${encodeURIComponent(preflightCallId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'CallSid=CApreflight&CallStatus=ringing',
+        signal: controller.signal,
+      });
       if (!statusResponse.ok) {
         return {
           ok: false,
