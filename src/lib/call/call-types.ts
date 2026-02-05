@@ -60,6 +60,7 @@ export interface CallState {
   endedAt?: Date;
   transcript: TranscriptEntry[];
   summary?: string;
+  recordingUrl?: string; // Twilio recording URL (available after processing)
 }
 
 // Transcript entry
@@ -76,7 +77,7 @@ export type ServerMessage =
   | { type: 'call_ringing'; callId: string }
   | { type: 'call_connected'; callId: string }
   | { type: 'transcript'; callId: string; text: string; role: 'assistant' | 'human'; isFinal: boolean }
-  | { type: 'call_ended'; callId: string; summary: string; status: CallStatus }
+  | { type: 'call_ended'; callId: string; summary: string; status: CallStatus; callSid?: string }
   | { type: 'error'; callId?: string; message: string };
 
 // WebSocket messages: Client → Server

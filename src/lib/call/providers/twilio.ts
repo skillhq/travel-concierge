@@ -94,6 +94,9 @@ export async function initiateCall(config: CallConfig, toNumber: string, callId:
     statusCallbackMethod: 'POST',
     // Wait up to 120 seconds for answer (default ~60s is too short for hold lines)
     timeout: 120,
+    // Record the full call audio (dual-channel: inbound on left, outbound on right)
+    record: true,
+    recordingChannels: 'dual',
   });
 
   return {
@@ -149,6 +152,23 @@ export async function getCallStatus(config: CallConfig, callSid: string): Promis
   const client = Twilio(config.twilioAccountSid, config.twilioAuthToken);
   const call = await client.calls(callSid).fetch();
   return call.status;
+}
+
+/**
+ * Get recording URLs for a completed call
+ */
+export async function getCallRecordings(
+  config: CallConfig,
+  callSid: string,
+): Promise<{ sid: string; url: string; duration: number }[]> {
+  const client = Twilio(config.twilioAccountSid, config.twilioAuthToken);
+  const recordings = await client.recordings.list({ callSid });
+
+  return recordings.map((r) => ({
+    sid: r.sid,
+    url: `https://api.twilio.com${r.uri.replace('.json', '.wav')}`,
+    duration: parseInt(r.duration || '0', 10),
+  }));
 }
 
 /**

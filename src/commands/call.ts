@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { createWriteStream, mkdirSync } from 'node:fs';
+import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as readline from 'node:readline';
@@ -16,6 +16,9 @@ import type { CliContext } from '../cli/shared.js';
 import type { ClientMessage, ServerMessage } from '../lib/call/index.js';
 import { preflightNgrok } from '../lib/call/providers/local-deps.js';
 import { loadConfig } from '../lib/config.js';
+
+const RECORDING_POLL_INTERVAL_MS = 3000;
+const RECORDING_POLL_MAX_ATTEMPTS = 20; // 60 seconds max wait
 
 const NGROK_START_TIMEOUT_MS = 20000;
 const SERVER_START_TIMEOUT_MS = 25000;
@@ -33,6 +36,58 @@ interface ManagedInfraRuntime {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function fetchAndSaveRecording(
+  port: number,
+  callSid: string,
+  logDir: string,
+  colors: CliContext['colors'],
+): Promise<string | null> {
+  console.log(colors.muted('Fetching call recording...'));
+
+  for (let attempt = 0; attempt < RECORDING_POLL_MAX_ATTEMPTS; attempt++) {
+    try {
+      // First check if recordings are available
+      const metaResponse = await fetch(`http://localhost:${port}/recordings/${callSid}`);
+      if (!metaResponse.ok) {
+        throw new Error(`Server returned ${metaResponse.status}`);
+      }
+
+      const meta = (await metaResponse.json()) as { recordings: { sid: string; duration: number }[] };
+      if (!meta.recordings || meta.recordings.length === 0) {
+        if (attempt < RECORDING_POLL_MAX_ATTEMPTS - 1) {
+          await delay(RECORDING_POLL_INTERVAL_MS);
+          continue;
+        }
+        console.log(colors.warning('No recording available (call may have been too short)'));
+        return null;
+      }
+
+      // Download the recording
+      const downloadResponse = await fetch(`http://localhost:${port}/recordings/${callSid}?download=true`);
+      if (!downloadResponse.ok) {
+        throw new Error(`Download failed: ${downloadResponse.status}`);
+      }
+
+      const audioBuffer = await downloadResponse.arrayBuffer();
+      const recordingPath = join(logDir, `recording-${callSid}.wav`);
+      writeFileSync(recordingPath, Buffer.from(audioBuffer));
+
+      console.log(colors.success(`Recording saved: ${recordingPath}`));
+      return recordingPath;
+    } catch (error) {
+      if (attempt < RECORDING_POLL_MAX_ATTEMPTS - 1) {
+        await delay(RECORDING_POLL_INTERVAL_MS);
+        continue;
+      }
+      const msg = error instanceof Error ? error.message : String(error);
+      console.log(colors.warning(`Could not fetch recording: ${msg}`));
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function getCliEntryPath(): string {
@@ -217,7 +272,13 @@ interface CallOptions {
   autoInfra: boolean;
 }
 
-function runCallOverControlSocket(phone: string, options: CallOptions, port: number, ctx: CliContext): Promise<void> {
+function runCallOverControlSocket(
+  phone: string,
+  options: CallOptions,
+  port: number,
+  ctx: CliContext,
+  logDir: string,
+): Promise<void> {
   const { colors } = ctx;
   const ws = new WebSocket(`ws://localhost:${port}/control`);
 
@@ -347,7 +408,21 @@ Phone: ${options.customerPhone}${options.context ? `\n${options.context}` : ''}`
             console.log('');
             console.log(colors.highlight('Summary:'));
             console.log(msg.summary);
-            safeResolve();
+
+            // Save transcript to log dir
+            const transcriptPath = join(logDir, 'transcript.txt');
+            writeFileSync(transcriptPath, msg.summary);
+            console.log('');
+            console.log(colors.muted(`Transcript saved: ${transcriptPath}`));
+
+            // Fetch and save recording if we have a callSid
+            if (msg.callSid) {
+              fetchAndSaveRecording(port, msg.callSid, logDir, colors)
+                .then(() => safeResolve())
+                .catch(() => safeResolve());
+            } else {
+              safeResolve();
+            }
             break;
           case 'error':
             console.log(colors.error(`Error: ${msg.message}`));
@@ -419,6 +494,9 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
       }
 
       let runtime: ManagedInfraRuntime = { enabled: false };
+      // Always create a log directory for call artifacts (transcript, recording)
+      const { logDir } = createInfraLogPaths();
+
       try {
         let serverReady = await isServerReachable(port, 1000);
         if (!serverReady) {
@@ -437,6 +515,8 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
 
           console.log(colors.info('Starting managed infrastructure (ngrok + server)...'));
           runtime = await startManagedInfra(port, config.ngrokAuthToken);
+          // Use the managed infra logDir instead
+          runtime.logDir = logDir;
           serverReady = true;
 
           console.log(colors.highlight('Infrastructure Logs:'));
@@ -454,7 +534,8 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
         }
 
         console.log(colors.info('Connecting to call server...'));
-        await runCallOverControlSocket(phone, options, port, ctx);
+        console.log(colors.muted(`Call logs: ${logDir}`));
+        await runCallOverControlSocket(phone, options, port, ctx, logDir);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(colors.error(`Call failed: ${message}`));

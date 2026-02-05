@@ -15,6 +15,7 @@ import {
   formatPhoneNumber,
   generateErrorTwiml,
   generateMediaStreamsTwiml,
+  getCallRecordings,
   getCallStatus,
   initiateCall,
   parseWebhookBody,
@@ -208,6 +209,8 @@ export class CallServer extends EventEmitter {
       this.handleTwilioStatus(req, res, url);
     } else if (method === 'GET' && url.pathname.startsWith('/status/')) {
       this.handleCallStatusCheck(res, url.pathname.split('/').pop() ?? '');
+    } else if (method === 'GET' && url.pathname.startsWith('/recordings/')) {
+      this.handleRecordingsRequest(res, url.pathname.split('/').pop() ?? '');
     } else {
       this.warn(`[HTTP] Unhandled request ${method} ${url.pathname}`);
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -249,6 +252,66 @@ export class CallServer extends EventEmitter {
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Call not found' }));
+    }
+  }
+
+  /**
+   * Get recordings for a call (returns metadata or audio)
+   * GET /recordings/:callSid - returns JSON with recording metadata
+   * GET /recordings/:callSid?download=true - returns audio/wav
+   */
+  private async handleRecordingsRequest(res: ServerResponse, callSid: string): Promise<void> {
+    if (!callSid) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing callSid' }));
+      return;
+    }
+
+    // Check for download query param (callSid may have ?download=true appended)
+    const [actualCallSid, queryPart] = callSid.split('?');
+    const shouldDownload = queryPart?.includes('download=true');
+
+    try {
+      const recordings = await getCallRecordings(this.options.config, actualCallSid);
+
+      if (!shouldDownload) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ recordings }));
+        return;
+      }
+
+      // Download mode - fetch and return the first recording's audio
+      if (recordings.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No recordings found' }));
+        return;
+      }
+
+      const recording = recordings[0];
+      const { twilioAccountSid, twilioAuthToken } = this.options.config;
+      const authHeader = 'Basic ' + Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64');
+
+      const audioResponse = await fetch(recording.url, {
+        headers: { Authorization: authHeader },
+      });
+
+      if (!audioResponse.ok) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Failed to download recording: ${audioResponse.status}` }));
+        return;
+      }
+
+      const audioBuffer = await audioResponse.arrayBuffer();
+      res.writeHead(200, {
+        'Content-Type': 'audio/wav',
+        'Content-Disposition': `attachment; filename="recording-${actualCallSid}.wav"`,
+        'Content-Length': audioBuffer.byteLength,
+      });
+      res.end(Buffer.from(audioBuffer));
+    } catch (error) {
+      this.error(`[Recordings] Failed to fetch recordings for ${actualCallSid}`, error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to fetch recordings' }));
     }
   }
 

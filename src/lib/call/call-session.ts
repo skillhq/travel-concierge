@@ -979,7 +979,12 @@ export class CallSession extends EventEmitter {
       callId: this.callId,
       summary,
       status: this.state.status,
+      callSid: this.state.callSid,
     });
+
+    if (this.state.callSid) {
+      this.log(`[Recording] Call recorded. Fetch via: twilio api:core:recordings:list --call-sid ${this.state.callSid}`);
+    }
 
     this.emit('ended', this.state);
   }
