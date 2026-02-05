@@ -10,7 +10,7 @@ import type { CliContext } from '../cli/shared.js';
 import { type CallConfig, createCallServer, validateCallConfig } from '../lib/call/index.js';
 import { loadConfig } from '../lib/config.js';
 
-const PID_FILE = join(homedir(), '.config', 'travel-concierge', 'server.pid');
+const PID_FILE = join(homedir(), '.config', 'concierge', 'server.pid');
 
 export function serverCommand(program: Command, getContext: () => CliContext): void {
   const server = program.command('server').description('Manage the voice call server');
@@ -39,7 +39,7 @@ export function serverCommand(program: Command, getContext: () => CliContext): v
         try {
           process.kill(Number(pid), 0);
           console.log(colors.warning(`Server already running (PID: ${pid})`));
-          console.log(colors.muted('Use "travel-concierge server stop" to stop it first'));
+          console.log(colors.muted('Use "concierge server stop" to stop it first'));
           return;
         } catch {
           // Process not running, clean up stale PID file
@@ -78,7 +78,7 @@ export function serverCommand(program: Command, getContext: () => CliContext): v
         }
         console.log('');
         console.log(colors.info('Set them with:'));
-        console.log(colors.muted('  travel-concierge config set <key> <value>'));
+        console.log(colors.muted('  concierge config set <key> <value>'));
         process.exit(1);
       }
 
@@ -193,7 +193,7 @@ export function serverCommand(program: Command, getContext: () => CliContext): v
           console.log(JSON.stringify({ running: false, stalePid: pid }));
         } else {
           console.log(colors.warning('Server process not found (stale PID file)'));
-          console.log(colors.muted('Run "travel-concierge server stop" to clean up'));
+          console.log(colors.muted('Run "concierge server stop" to clean up'));
         }
         return;
       }

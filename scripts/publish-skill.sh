@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish travel-concierge skill to ClawdHub
+# Publish concierge skill to ClawdHub
 # Usage:
 #   ./scripts/publish-skill.sh              # Use version from package.json
 #   ./scripts/publish-skill.sh 0.2.0        # Specify version
@@ -49,7 +49,7 @@ if [[ -z "$CHANGELOG" ]]; then
     CHANGELOG="Version $VERSION"
 fi
 
-echo "Publishing travel-concierge skill v$VERSION"
+echo "Publishing concierge skill v$VERSION"
 echo "Changelog:"
 echo "$CHANGELOG"
 echo ""
@@ -63,11 +63,11 @@ fi
 # Publish to ClawdHub
 # Note: --workdir is required to override clawdbot default workspace
 clawdhub --workdir "$PROJECT_DIR" publish . \
-    --slug travel-concierge \
+    --slug concierge \
     --name "Travel Concierge CLI" \
     --version "$VERSION" \
     --tags latest \
     --changelog "$CHANGELOG"
 
 echo ""
-echo "Published travel-concierge@$VERSION to ClawdHub"
+echo "Published concierge@$VERSION to ClawdHub"

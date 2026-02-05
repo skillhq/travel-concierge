@@ -20,25 +20,25 @@ Make autonomous phone calls with a goal-driven AI agent. The AI handles the conv
 
 1. **Required configuration:**
    ```bash
-   travel-concierge config set twilioAccountSid <your-sid>
-   travel-concierge config set twilioAuthToken <your-token>
-   travel-concierge config set twilioPhoneNumber <your-number>
-   travel-concierge config set deepgramApiKey <your-key>
-   travel-concierge config set elevenLabsApiKey <your-key>
-   travel-concierge config set elevenLabsVoiceId <voice-id>
-   travel-concierge config set anthropicApiKey <your-key>
+   concierge config set twilioAccountSid <your-sid>
+   concierge config set twilioAuthToken <your-token>
+   concierge config set twilioPhoneNumber <your-number>
+   concierge config set deepgramApiKey <your-key>
+   concierge config set elevenLabsApiKey <your-key>
+   concierge config set elevenLabsVoiceId <voice-id>
+   concierge config set anthropicApiKey <your-key>
    ```
 
 2. **Optional for auto-managed ngrok:**
    ```bash
-   travel-concierge config set ngrokAuthToken <your-ngrok-token>
+   concierge config set ngrokAuthToken <your-ngrok-token>
    ```
 
 ## Usage
 
 ### Basic call
 ```bash
-travel-concierge call "+1-555-123-4567" \
+concierge call "+1-555-123-4567" \
   --goal "Book a hotel room for February 15" \
   --name "John Smith" \
   --email "john@example.com" \
@@ -48,7 +48,7 @@ travel-concierge call "+1-555-123-4567" \
 
 ### Interactive mode
 ```bash
-travel-concierge call "+1-555-123-4567" \
+concierge call "+1-555-123-4567" \
   --goal "Make a reservation" \
   --name "John Smith" \
   --email "john@example.com" \
@@ -63,19 +63,19 @@ In interactive mode, you type what the AI should say in real-time.
 - Use `--no-auto-infra` to disable this and run everything manually.
 - Auto-managed processes are stopped automatically when the call ends.
 - Log files are written to:
-  - `~/.config/travel-concierge/call-runs/<run-id>/server.log`
-  - `~/.config/travel-concierge/call-runs/<run-id>/ngrok.log`
+  - `~/.config/concierge/call-runs/<run-id>/server.log`
+  - `~/.config/concierge/call-runs/<run-id>/ngrok.log`
 
 ### Server management
 ```bash
 # Check server status
-travel-concierge server status
+concierge server status
 
 # Start server
-travel-concierge server start --public-url <ngrok-url>
+concierge server start --public-url <ngrok-url>
 
 # Stop server
-travel-concierge server stop
+concierge server stop
 ```
 
 ## Preflight checks
@@ -100,7 +100,7 @@ Before dialing, the system validates:
 
 ### Book a hotel reservation
 ```bash
-travel-concierge call "+1-800-HILTON" \
+concierge call "+1-800-HILTON" \
   --goal "Book a room for 2 nights" \
   --name "Sarah Johnson" \
   --email "sarah@example.com" \
@@ -110,7 +110,7 @@ travel-concierge call "+1-800-HILTON" \
 
 ### Make a restaurant reservation
 ```bash
-travel-concierge call "+1-555-DINER" \
+concierge call "+1-555-DINER" \
   --goal "Reserve a table for dinner" \
   --name "Garcia" \
   --email "garcia@example.com" \
@@ -120,7 +120,7 @@ travel-concierge call "+1-555-DINER" \
 
 ### Cancel an appointment
 ```bash
-travel-concierge call "+1-555-DOCTOR" \
+concierge call "+1-555-DOCTOR" \
   --goal "Cancel appointment" \
   --name "Mike Chen" \
   --email "mike@example.com" \
@@ -138,7 +138,7 @@ Some popular ElevenLabs voices:
 
 Set your preferred voice:
 ```bash
-travel-concierge config set elevenLabsVoiceId <voice-id>
+concierge config set elevenLabsVoiceId <voice-id>
 ```
 
 ## Latency
@@ -153,7 +153,7 @@ Target voice-to-voice latency: < 500ms
 ## Troubleshooting
 
 ### Server won't start
-- Check all config keys are set: `travel-concierge config show`
+- Check all config keys are set: `concierge config show`
 - If using manual mode, ensure ngrok is running and URL is correct
 - Check port 3000 is available
 

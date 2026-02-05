@@ -134,7 +134,7 @@ export class ConciergeClient {
 
   private log(message: string, verbose: boolean): void {
     if (verbose) {
-      console.log(`[travel-concierge] ${message}`);
+      console.log(`[concierge] ${message}`);
     }
   }
 

@@ -5,7 +5,7 @@ Find accommodation contact details and place AI-powered booking calls.
 ## Installation
 
 ```bash
-skill install @skillhq/travel-concierge
+skill install @skillhq/concierge
 ```
 
 ## Features
@@ -47,13 +47,13 @@ The call preflight now fails fast with a clear error if these dependencies are m
 ### Find contacts for a listing
 
 ```bash
-travel-concierge find-contact "https://www.airbnb.com/rooms/12345"
+concierge find-contact "https://www.airbnb.com/rooms/12345"
 ```
 
 ### Place an AI booking call
 
 ```bash
-travel-concierge call "+1-555-123-4567" \
+concierge call "+1-555-123-4567" \
   --goal "Book a room for March 12-14" \
   --name "John Smith" \
   --email "john@example.com" \
@@ -62,24 +62,24 @@ travel-concierge call "+1-555-123-4567" \
 
 ## Configuration
 
-Configuration is stored in `~/.config/travel-concierge/config.json5`.
+Configuration is stored in `~/.config/concierge/config.json5`.
 
 ### For contact lookup (optional)
 
 ```bash
-travel-concierge config set googlePlacesApiKey "your-key"
+concierge config set googlePlacesApiKey "your-key"
 ```
 
 ### For AI phone calls (required)
 
 ```bash
-travel-concierge config set twilioAccountSid "<sid>"
-travel-concierge config set twilioAuthToken "<token>"
-travel-concierge config set twilioPhoneNumber "+14155551234"
-travel-concierge config set deepgramApiKey "<key>"
-travel-concierge config set elevenLabsApiKey "<key>"
-travel-concierge config set elevenLabsVoiceId "EXAVITQu4vr4xnSDxMaL"
-travel-concierge config set anthropicApiKey "<key>"
+concierge config set twilioAccountSid "<sid>"
+concierge config set twilioAuthToken "<token>"
+concierge config set twilioPhoneNumber "+14155551234"
+concierge config set deepgramApiKey "<key>"
+concierge config set elevenLabsApiKey "<key>"
+concierge config set elevenLabsVoiceId "EXAVITQu4vr4xnSDxMaL"
+concierge config set anthropicApiKey "<key>"
 ```
 
 ## Documentation

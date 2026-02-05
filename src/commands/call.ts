@@ -44,7 +44,7 @@ function getCliEntryPath(): string {
 
 function createInfraLogPaths(): { logDir: string; ngrokLogPath: string; serverLogPath: string } {
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
-  const logDir = join(homedir(), '.config', 'travel-concierge', 'call-runs', runId);
+  const logDir = join(homedir(), '.config', 'concierge', 'call-runs', runId);
   mkdirSync(logDir, { recursive: true });
   return {
     logDir,
@@ -425,7 +425,7 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
           if (!options.autoInfra) {
             console.log(colors.error('Call server is not running and auto-infra is disabled.'));
             console.log(colors.info('Start manually with:'));
-            console.log(colors.muted('  travel-concierge server start --public-url <ngrok-url>'));
+            console.log(colors.muted('  concierge server start --public-url <ngrok-url>'));
             process.exit(1);
           }
 

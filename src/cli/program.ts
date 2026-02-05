@@ -27,7 +27,7 @@ export function createProgram(): Command {
   const program = new Command();
 
   program
-    .name('travel-concierge')
+    .name('concierge')
     .description('Find contact details for accommodation listings (Airbnb, Booking.com, VRBO, Expedia)')
     .version(pkg.version);
 

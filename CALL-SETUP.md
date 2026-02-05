@@ -1,6 +1,6 @@
 # Voice Call Setup Guide
 
-This guide walks you through setting up the voice call system for travel-concierge.
+This guide walks you through setting up the voice call system for concierge.
 
 ## Overview
 
@@ -82,34 +82,34 @@ The voice call system uses:
    ngrok config add-authtoken <your-token>
    ```
 
-## Step 2: Configure travel-concierge
+## Step 2: Configure concierge
 
 Set all required configuration values:
 
 ```bash
 # Twilio credentials (from https://console.twilio.com)
-travel-concierge config set twilioAccountSid ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-travel-concierge config set twilioAuthToken xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+concierge config set twilioAccountSid ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+concierge config set twilioAuthToken xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # Use the full E.164 format with country code, e.g., +14155551234
-travel-concierge config set twilioPhoneNumber +14155551234
+concierge config set twilioPhoneNumber +14155551234
 
 # Deepgram
-travel-concierge config set deepgramApiKey xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+concierge config set deepgramApiKey xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # ElevenLabs
-travel-concierge config set elevenLabsApiKey xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-travel-concierge config set elevenLabsVoiceId EXAVITQu4vr4xnSDxMaL
+concierge config set elevenLabsApiKey xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+concierge config set elevenLabsVoiceId EXAVITQu4vr4xnSDxMaL
 
 # Anthropic (for AI conversation)
-travel-concierge config set anthropicApiKey sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+concierge config set anthropicApiKey sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Optional: custom port (default: 3000)
-travel-concierge config set callServerPort 3000
+concierge config set callServerPort 3000
 ```
 
 Verify your configuration:
 ```bash
-travel-concierge config show
+concierge config show
 ```
 
 ## Step 3: Start the Server
@@ -122,12 +122,12 @@ travel-concierge config show
 
 2. **Start the call server**:
    ```bash
-   travel-concierge server start --public-url https://abc123.ngrok.io
+   concierge server start --public-url https://abc123.ngrok.io
    ```
 
 3. **Verify it's running**:
    ```bash
-   travel-concierge server status
+   concierge server status
    ```
 
 ## Step 4: Test a Call
@@ -135,7 +135,7 @@ travel-concierge config show
 Call your own phone to test:
 
 ```bash
-travel-concierge call "+1-YOUR-PHONE-NUMBER" \
+concierge call "+1-YOUR-PHONE-NUMBER" \
   --goal "Test the connection" \
   --context "This is a test call"
 ```
@@ -149,14 +149,14 @@ You should:
 
 ### Book a hotel room
 ```bash
-travel-concierge call "+1-800-HILTON" \
+concierge call "+1-800-HILTON" \
   --goal "Book a room for 2 nights" \
   --context "Check-in: Feb 15, Guest: John Smith, King bed, non-smoking"
 ```
 
 ### Make a restaurant reservation
 ```bash
-travel-concierge call "+1-555-RESTAURANT" \
+concierge call "+1-555-RESTAURANT" \
   --goal "Make a dinner reservation" \
   --context "Party of 4, 7:30 PM Saturday, name: Garcia"
 ```
@@ -164,7 +164,7 @@ travel-concierge call "+1-555-RESTAURANT" \
 ### Interactive mode
 For real-time control over what the AI says:
 ```bash
-travel-concierge call "+1-555-1234" \
+concierge call "+1-555-1234" \
   --goal "Custom conversation" \
   --interactive
 ```
@@ -173,7 +173,7 @@ travel-concierge call "+1-555-1234" \
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  travel-concierge call                                           │
+│  concierge call                                           │
 │  "Call the hotel at +1-555-1234 and book a room for Feb 15"     │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ HTTP/WebSocket
@@ -211,13 +211,13 @@ The call flow:
 ### "Server is not running"
 Start the server first:
 ```bash
-travel-concierge server start --public-url <your-ngrok-url>
+concierge server start --public-url <your-ngrok-url>
 ```
 
 ### "Missing required configuration"
 Check which keys are missing:
 ```bash
-travel-concierge config show
+concierge config show
 ```
 
 ### Call doesn't connect
@@ -251,7 +251,7 @@ A typical 5-minute call costs approximately $0.30-0.50.
 
 ## Security Notes
 
-- API keys are stored in `~/.config/travel-concierge/config.json5`
+- API keys are stored in `~/.config/concierge/config.json5`
 - Keys are masked when displayed with `config show`
 - The server runs locally - don't expose it directly to the internet
 - Use ngrok only for development; consider proper hosting for production

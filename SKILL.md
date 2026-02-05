@@ -1,5 +1,5 @@
 ---
-name: travel-concierge
+name: concierge
 description: Find accommodation contact details and run AI-assisted booking calls
 version: 1.3.1
 triggers:
@@ -28,13 +28,13 @@ Find contact details (phone, email, WhatsApp, Instagram, etc.) for accommodation
 ### 1) Find contact details from a listing URL
 
 ```bash
-travel-concierge find-contact "<url>"
+concierge find-contact "<url>"
 ```
 
 ### 2) Place an autonomous phone call
 
 ```bash
-travel-concierge call "+1-555-123-4567" \
+concierge call "+1-555-123-4567" \
   --goal "Book a room for March 12-14" \
   --name "Derek Rein" \
   --email "alexanderderekrein@gmail.com" \
@@ -56,13 +56,13 @@ The `call` command now auto-manages infra by default: if local server is down, i
 ### Find contacts for an Airbnb listing
 Run:
 ```bash
-travel-concierge find-contact "https://www.airbnb.com/rooms/12345"
+concierge find-contact "https://www.airbnb.com/rooms/12345"
 ```
 
 ### Start a call and control turns manually
 Run:
 ```bash
-travel-concierge call "+1-555-123-4567" \
+concierge call "+1-555-123-4567" \
   --goal "Negotiate a direct booking rate" \
   --name "Derek Rein" \
   --email "alexanderderekrein@gmail.com" \
@@ -72,45 +72,45 @@ travel-concierge call "+1-555-123-4567" \
 
 ### JSON output for scripting (contact lookup)
 ```bash
-travel-concierge find-contact --json "https://..."
+concierge find-contact --json "https://..."
 ```
 
 ### Verbose output
 ```bash
-travel-concierge --verbose find-contact "https://..."
+concierge --verbose find-contact "https://..."
 ```
 
 ## Configuration
 
 The CLI stores configuration in:
 
-`~/.config/travel-concierge/config.json5`
+`~/.config/concierge/config.json5`
 
 ### Optional for contact lookup
 
 ```bash
-travel-concierge config set googlePlacesApiKey "your-key"
+concierge config set googlePlacesApiKey "your-key"
 ```
 
 ### Required for AI phone calls
 
 ```bash
-travel-concierge config set twilioAccountSid "<sid>"
-travel-concierge config set twilioAuthToken "<token>"
-travel-concierge config set twilioPhoneNumber "+14155551234"
-travel-concierge config set deepgramApiKey "<key>"
-travel-concierge config set elevenLabsApiKey "<key>"
-travel-concierge config set elevenLabsVoiceId "EXAVITQu4vr4xnSDxMaL"
-travel-concierge config set anthropicApiKey "<key>"
+concierge config set twilioAccountSid "<sid>"
+concierge config set twilioAuthToken "<token>"
+concierge config set twilioPhoneNumber "+14155551234"
+concierge config set deepgramApiKey "<key>"
+concierge config set elevenLabsApiKey "<key>"
+concierge config set elevenLabsVoiceId "EXAVITQu4vr4xnSDxMaL"
+concierge config set anthropicApiKey "<key>"
 
 # Optional for auto ngrok auth
-travel-concierge config set ngrokAuthToken "<token>"
+concierge config set ngrokAuthToken "<token>"
 ```
 
 Check values:
 
 ```bash
-travel-concierge config show
+concierge config show
 ```
 
 ## Notes
@@ -118,4 +118,4 @@ travel-concierge config show
 - Contact extraction uses publicly available information.
 - `call` validates local dependencies before dialing (`ffmpeg` with MP3 decode support, and `ngrok` when auto-infra is needed).
 - `call` runs preflight checks for Twilio, Deepgram, and ElevenLabs quota before dialing.
-- When auto infra is used, server/ngrok logs are written under `~/.config/travel-concierge/call-runs/<run-id>/`.
+- When auto infra is used, server/ngrok logs are written under `~/.config/concierge/call-runs/<run-id>/`.

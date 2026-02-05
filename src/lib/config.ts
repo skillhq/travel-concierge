@@ -1,10 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import JSON5 from 'json5';
 import type { ConciergeConfig } from './concierge-client-types.js';
 
-const CONFIG_DIR = join(homedir(), '.config', 'travel-concierge');
+const OLD_CONFIG_DIR = join(homedir(), '.config', 'travel-concierge');
+const CONFIG_DIR = join(homedir(), '.config', 'concierge');
+
+// Migration: move old config dir to new location
+function migrateConfigIfNeeded(): void {
+  if (existsSync(OLD_CONFIG_DIR) && !existsSync(CONFIG_DIR)) {
+    renameSync(OLD_CONFIG_DIR, CONFIG_DIR);
+    console.log('Migrated config from ~/.config/travel-concierge to ~/.config/concierge');
+  }
+}
+
+// Run migration at module load time
+migrateConfigIfNeeded();
+
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json5');
 
 const DEFAULT_CONFIG: ConciergeConfig = {
