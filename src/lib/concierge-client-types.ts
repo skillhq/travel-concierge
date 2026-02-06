@@ -71,6 +71,8 @@ export interface ConciergeConfig {
   callServerPort?: number;
   // AI conversation
   anthropicApiKey?: string;
+  // Call output
+  callOutputDir?: string;
 }
 
 // Fetch options

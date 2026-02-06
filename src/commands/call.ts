@@ -97,9 +97,16 @@ function getCliEntryPath(): string {
   return resolve(process.cwd(), 'dist', 'cli.js');
 }
 
-function createInfraLogPaths(): { logDir: string; ngrokLogPath: string; serverLogPath: string } {
-  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
-  const logDir = join(homedir(), '.config', 'concierge', 'call-runs', runId);
+function createInfraLogPaths(
+  baseDir?: string,
+  phone?: string,
+): { logDir: string; ngrokLogPath: string; serverLogPath: string } {
+  const sanitizedPhone = phone ? phone.replace(/[^+\dA-Za-z]/g, '') : undefined;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const suffix = randomUUID().slice(0, 8);
+  const runId = sanitizedPhone ? `${sanitizedPhone}_${timestamp}-${suffix}` : `${timestamp}-${suffix}`;
+  const base = baseDir ?? join(homedir(), '.config', 'concierge', 'call-runs');
+  const logDir = join(base, runId);
   mkdirSync(logDir, { recursive: true });
   return {
     logDir,
@@ -193,9 +200,11 @@ async function waitForNgrokPublicUrl(processRef: ChildProcess, timeoutMs: number
 async function startManagedInfra(
   port: number,
   ngrokAuthToken: string | undefined,
+  logBaseDir?: string,
+  phone?: string,
 ): Promise<ManagedInfraRuntime & { publicUrl: string }> {
   const runtime: ManagedInfraRuntime = { enabled: true };
-  const { logDir, ngrokLogPath, serverLogPath } = createInfraLogPaths();
+  const { logDir, ngrokLogPath, serverLogPath } = createInfraLogPaths(logBaseDir, phone);
   runtime.logDir = logDir;
   runtime.ngrokLogPath = ngrokLogPath;
   runtime.serverLogPath = serverLogPath;
@@ -268,6 +277,7 @@ interface CallOptions {
   customerPhone: string;
   context?: string;
   port?: string;
+  outputDir?: string;
   interactive: boolean;
   autoInfra: boolean;
 }
@@ -482,6 +492,7 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
     .option('-c, --context <context>', 'Additional context (e.g., "2 nights, king bed preferred")')
     .option('-p, --port <port>', 'Server port')
     .option('--interactive', 'Interactive mode - type responses manually', false)
+    .option('-o, --output-dir <dir>', 'Directory for call logs, transcripts, and recordings')
     .option('--no-auto-infra', 'Do not auto-start ngrok + server when server is unavailable')
     .action(async (phone: string, options: CallOptions) => {
       const ctx = getContext();
@@ -495,8 +506,9 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
       }
 
       let runtime: ManagedInfraRuntime = { enabled: false };
-      // Always create a log directory for call artifacts (transcript, recording)
-      const { logDir } = createInfraLogPaths();
+      const callOutputBase = options.outputDir ?? config.callOutputDir ?? undefined;
+      // Log directory for call artifacts (transcript, recording) — set below
+      let logDir: string | undefined;
 
       try {
         let serverReady = await isServerReachable(port, 1000);
@@ -515,9 +527,8 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
           console.log(colors.info(`[Preflight] ${ngrokPreflight.message}`));
 
           console.log(colors.info('Starting managed infrastructure (ngrok + server)...'));
-          runtime = await startManagedInfra(port, config.ngrokAuthToken);
-          // Use the managed infra logDir instead
-          runtime.logDir = logDir;
+          runtime = await startManagedInfra(port, config.ngrokAuthToken, callOutputBase, phone);
+          logDir = runtime.logDir!;
           serverReady = true;
 
           console.log(colors.highlight('Infrastructure Logs:'));
@@ -532,6 +543,11 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
 
         if (!serverReady) {
           throw new Error(`Unable to reach call server on port ${port}`);
+        }
+
+        // When server was already running, create a standalone log dir
+        if (!logDir) {
+          logDir = createInfraLogPaths(callOutputBase, phone).logDir;
         }
 
         console.log(colors.info('Connecting to call server...'));
