@@ -31,3 +31,6 @@ eval-results/
 
 # Ad-hoc test scripts
 test-*.mjs
+
+# Call recordings
+calls/
