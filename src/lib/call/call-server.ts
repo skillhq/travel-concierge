@@ -210,7 +210,7 @@ export class CallServer extends EventEmitter {
     } else if (method === 'GET' && url.pathname.startsWith('/status/')) {
       this.handleCallStatusCheck(res, url.pathname.split('/').pop() ?? '');
     } else if (method === 'GET' && url.pathname.startsWith('/recordings/')) {
-      this.handleRecordingsRequest(res, url.pathname.split('/').pop() ?? '');
+      this.handleRecordingsRequest(res, url.pathname.split('/').pop() ?? '', url.searchParams.get('download') === 'true');
     } else {
       this.warn(`[HTTP] Unhandled request ${method} ${url.pathname}`);
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -260,16 +260,14 @@ export class CallServer extends EventEmitter {
    * GET /recordings/:callSid - returns JSON with recording metadata
    * GET /recordings/:callSid?download=true - returns audio/wav
    */
-  private async handleRecordingsRequest(res: ServerResponse, callSid: string): Promise<void> {
+  private async handleRecordingsRequest(res: ServerResponse, callSid: string, shouldDownload: boolean): Promise<void> {
     if (!callSid) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Missing callSid' }));
       return;
     }
 
-    // Check for download query param (callSid may have ?download=true appended)
-    const [actualCallSid, queryPart] = callSid.split('?');
-    const shouldDownload = queryPart?.includes('download=true');
+    const actualCallSid = callSid;
 
     try {
       const recordings = await getCallRecordings(this.options.config, actualCallSid);

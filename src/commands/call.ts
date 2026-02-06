@@ -55,7 +55,7 @@ async function fetchAndSaveRecording(
       }
 
       const meta = (await metaResponse.json()) as { recordings: { sid: string; duration: number }[] };
-      if (!meta.recordings || meta.recordings.length === 0) {
+      if (!meta.recordings || meta.recordings.length === 0 || meta.recordings[0].duration < 0) {
         if (attempt < RECORDING_POLL_MAX_ATTEMPTS - 1) {
           await delay(RECORDING_POLL_INTERVAL_MS);
           continue;
