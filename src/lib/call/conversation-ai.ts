@@ -66,6 +66,30 @@ export function extractMostRecentQuestion(text: string): string | undefined {
   return question;
 }
 
+/**
+ * Find a sentence boundary in a text buffer for streaming TTS.
+ * Returns the index just past the boundary, or -1 if none found.
+ * Splits on sentence-ending punctuation followed by whitespace.
+ * For longer buffers (40+ chars), also splits on commas for faster TTS start.
+ */
+export function findSentenceBoundary(text: string): number {
+  // Look for sentence-ending punctuation followed by a space
+  const sentenceEnd = text.search(/[.!?]\s/);
+  if (sentenceEnd !== -1) {
+    return sentenceEnd + 2; // past the punctuation + space
+  }
+
+  // For longer buffers, split on comma + space for faster TTS output
+  if (text.length >= 40) {
+    const commaEnd = text.search(/,\s/);
+    if (commaEnd !== -1) {
+      return commaEnd + 2;
+    }
+  }
+
+  return -1;
+}
+
 const SYSTEM_PROMPT = `You are an AI assistant making a phone call on behalf of a customer. YOU are the caller seeking assistance - the person who answers is the one providing service to you.
 
 CRITICAL ROLE REMINDER - READ THIS CAREFULLY:
@@ -297,6 +321,99 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
       // Don't add fallback text to history - it pollutes the context.
       this.messages.pop();
       throw new Error(`Conversation AI request failed: ${details}`);
+    }
+  }
+
+  /**
+   * Generate a streaming response to what the human said.
+   * Yields sentence chunks as they become available.
+   * Returns the full assembled response text.
+   */
+  async *respondStreaming(humanSaid: string, turnContext?: TurnContext): AsyncGenerator<string, string> {
+    if (this.isComplete) {
+      return '';
+    }
+
+    let userInput: string;
+    if (!turnContext?.shortAcknowledgement) {
+      userInput = humanSaid;
+    } else {
+      const contextLines: string[] = [
+        '[TURN CONTEXT]',
+        'The human gave a short acknowledgement likely answering your most recent question.',
+      ];
+      if (turnContext.lastAssistantQuestion) {
+        contextLines.push(`Most recent question you asked: "${turnContext.lastAssistantQuestion}"`);
+      } else if (turnContext.lastAssistantUtterance) {
+        contextLines.push(`Your previous spoken turn: "${turnContext.lastAssistantUtterance}"`);
+      }
+      contextLines.push(
+        'Interpret the acknowledgement as a direct answer to your latest question, then proceed to exactly one next question without rehashing earlier context.',
+        '',
+        `Human said: ${humanSaid}`,
+      );
+      userInput = contextLines.join('\n');
+    }
+
+    // Add user message to history
+    this.messages.push({ role: 'user', content: userInput });
+
+    const systemWithGoal = `${SYSTEM_PROMPT}
+
+YOUR GOAL FOR THIS CALL: ${this.goal}
+${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
+
+    try {
+      const stream = this.client.messages.stream({
+        model: this.model,
+        max_tokens: 150,
+        system: systemWithGoal,
+        messages: this.messages,
+      });
+
+      let fullText = '';
+      let buffer = '';
+
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          const delta = event.delta.text;
+          fullText += delta;
+          buffer += delta;
+
+          // Try to find a sentence boundary
+          let boundary = findSentenceBoundary(buffer);
+          while (boundary !== -1) {
+            const sentence = buffer.slice(0, boundary).trim();
+            buffer = buffer.slice(boundary).trim();
+            if (sentence) {
+              yield sentence;
+            }
+            boundary = findSentenceBoundary(buffer);
+          }
+        }
+      }
+
+      // Yield any remaining buffer
+      const remaining = buffer.trim();
+      if (remaining) {
+        yield remaining;
+      }
+
+      // Check if call should end
+      if (fullText.includes('[CALL_COMPLETE]')) {
+        this.isComplete = true;
+        fullText = fullText.replace('[CALL_COMPLETE]', '').trim();
+      }
+
+      // Add assistant response to history
+      this.messages.push({ role: 'assistant', content: fullText });
+
+      return fullText;
+    } catch (error) {
+      const details = this.formatApiError(error);
+      console.error(`[ConversationAI] Streaming error: ${details}`);
+      this.messages.pop();
+      throw new Error(`Conversation AI streaming request failed: ${details}`);
     }
   }
 

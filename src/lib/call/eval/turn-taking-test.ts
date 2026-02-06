@@ -11,7 +11,7 @@
 import { EventEmitter } from 'node:events';
 
 // Response debounce time (must match CallSession.RESPONSE_DEBOUNCE_MS)
-const RESPONSE_DEBOUNCE_MS = 1000;
+const RESPONSE_DEBOUNCE_MS = 500;
 
 export interface TranscriptEvent {
   text: string;
@@ -175,11 +175,11 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     description: 'User pauses thinking, continues - transcripts should combine',
     events: [
       { text: 'How much', isFinal: true, delayMs: 0 },
-      { text: 'were you looking for?', isFinal: true, delayMs: 600 }, // Within debounce window
+      { text: 'were you looking for?', isFinal: true, delayMs: 350 }, // Within debounce window
     ],
     expectedTranscript: 'How much were you looking for?',
-    expectedMinDelayMs: 600 + RESPONSE_DEBOUNCE_MS - 50,
-    expectedMaxDelayMs: 600 + RESPONSE_DEBOUNCE_MS + 100,
+    expectedMinDelayMs: 350 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 350 + RESPONSE_DEBOUNCE_MS + 100,
     shouldRespond: true,
   },
   {
@@ -188,11 +188,11 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     description: 'User pauses longer but still within window',
     events: [
       { text: 'Yeah. I think so. But it feels', isFinal: true, delayMs: 0 },
-      { text: 'a little bit weird', isFinal: true, delayMs: 700 }, // Just within debounce
+      { text: 'a little bit weird', isFinal: true, delayMs: 400 }, // Just within debounce
     ],
     expectedTranscript: 'Yeah. I think so. But it feels a little bit weird',
-    expectedMinDelayMs: 700 + RESPONSE_DEBOUNCE_MS - 50,
-    expectedMaxDelayMs: 700 + RESPONSE_DEBOUNCE_MS + 100,
+    expectedMinDelayMs: 400 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 400 + RESPONSE_DEBOUNCE_MS + 100,
     shouldRespond: true,
   },
   {
@@ -201,12 +201,12 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     description: 'User pauses twice while thinking',
     events: [
       { text: 'Well', isFinal: true, delayMs: 0 },
-      { text: 'let me think', isFinal: true, delayMs: 500 },
-      { text: 'maybe around three fifty?', isFinal: true, delayMs: 600 },
+      { text: 'let me think', isFinal: true, delayMs: 300 },
+      { text: 'maybe around three fifty?', isFinal: true, delayMs: 350 },
     ],
     expectedTranscript: 'Well let me think maybe around three fifty?',
-    expectedMinDelayMs: 500 + 600 + RESPONSE_DEBOUNCE_MS - 50,
-    expectedMaxDelayMs: 500 + 600 + RESPONSE_DEBOUNCE_MS + 100,
+    expectedMinDelayMs: 300 + 350 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 300 + 350 + RESPONSE_DEBOUNCE_MS + 100,
     shouldRespond: true,
   },
 
@@ -246,13 +246,13 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     description: 'Empty or whitespace transcripts should not affect debounce',
     events: [
       { text: 'Hello', isFinal: true, delayMs: 0 },
-      { text: '', isFinal: true, delayMs: 200 },
-      { text: '   ', isFinal: true, delayMs: 200 },
-      { text: 'world', isFinal: true, delayMs: 200 },
+      { text: '', isFinal: true, delayMs: 100 },
+      { text: '   ', isFinal: true, delayMs: 100 },
+      { text: 'world', isFinal: true, delayMs: 100 },
     ],
     expectedTranscript: 'Hello world',
-    expectedMinDelayMs: 600 + RESPONSE_DEBOUNCE_MS - 50,
-    expectedMaxDelayMs: 600 + RESPONSE_DEBOUNCE_MS + 100,
+    expectedMinDelayMs: 300 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 300 + RESPONSE_DEBOUNCE_MS + 100,
     shouldRespond: true,
   },
 ];

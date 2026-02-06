@@ -321,6 +321,24 @@ export const PHONE_CALL_KEYWORDS = [
   'available',
   'confirm',
   'cancel',
+  // Dining
+  'restaurant',
+  'dinner',
+  'lunch',
+  'table',
+  'guests',
+  'party',
+  'patio',
+  // Travel
+  'hotel',
+  'flight',
+  'airport',
+  'suite',
+  'confirmation',
+  // Contact info
+  'email',
+  'credit card',
+  'phone number',
 ];
 
 /**
@@ -334,13 +352,12 @@ export function createPhoneCallSTT(apiKey: string): DeepgramSTT {
     language: 'en-US',
     punctuate: true,
     interimResults: true,
-    // 800ms of silence within a phrase to end the utterance
-    // Combined with 1000ms response debounce = ~1.8s total before AI responds
-    // This allows for natural thinking pauses without interruption
-    endpointing: 800,
+    // 500ms of silence within a phrase to end the utterance (Deepgram default is 300ms)
+    // Combined with 500ms response debounce = ~1s total before AI responds
+    endpointing: 500,
     // Filter out low-confidence transcripts (noise, misrecognition)
-    // 80% threshold filters out garbage like "West" (62%) while keeping good transcripts
-    confidenceThreshold: 0.8,
+    // 65% threshold balances catching real speech vs filtering garbage
+    confidenceThreshold: 0.65,
     // Boost common conversational words for better recognition
     keywords: PHONE_CALL_KEYWORDS,
   });

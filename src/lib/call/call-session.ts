@@ -334,8 +334,8 @@ export class CallSession extends EventEmitter {
 
   // How long to wait after final transcript before responding (ms)
   // This allows the human to pause mid-sentence without being interrupted
-  // 1000ms = 1 second of silence before AI responds
-  private static readonly RESPONSE_DEBOUNCE_MS = 1000;
+  // 500ms debounce + 500ms Deepgram endpointing = ~1s total before AI responds
+  private static readonly RESPONSE_DEBOUNCE_MS = 500;
 
   /**
    * Handle transcription results from Deepgram
@@ -560,7 +560,8 @@ export class CallSession extends EventEmitter {
   }
 
   /**
-   * Generate and speak AI response to human speech
+   * Generate and speak AI response to human speech (streaming pipeline).
+   * Streams Claude output sentence-by-sentence to TTS for lower latency.
    */
   private async generateAIResponse(humanSaid: string): Promise<void> {
     if (this.conversationAI.complete) {
@@ -572,35 +573,71 @@ export class CallSession extends EventEmitter {
     const responseStart = Date.now();
 
     try {
-      this.log(`[AI] Generating response to: "${humanSaid}"`);
+      this.log(`[AI] Generating streaming response to: "${humanSaid}"`);
       const lastAssistantUtterance = this.getLastAssistantUtterance();
       const shortAcknowledgement = isLikelyShortAcknowledgement(humanSaid);
       const lastAssistantQuestion = lastAssistantUtterance
         ? extractMostRecentQuestion(lastAssistantUtterance)
         : undefined;
-      const response = await this.conversationAI.respond(humanSaid, {
+
+      const generator = this.conversationAI.respondStreaming(humanSaid, {
         shortAcknowledgement,
         lastAssistantUtterance,
         lastAssistantQuestion,
       });
-      this.log(`[AI] Response ready (${Date.now() - responseStart}ms, ${response?.length || 0} chars)`);
 
-      if (response === null) {
-        // Conversation is complete
-        this.log('[AI] Conversation complete');
+      let chunkCount = 0;
+      let fullResponse = '';
+      let firstChunkMs: number | null = null;
+
+      for await (const chunk of generator) {
+        chunkCount++;
+        fullResponse += (fullResponse ? ' ' : '') + chunk;
+        if (chunkCount === 1) {
+          firstChunkMs = Date.now() - responseStart;
+          this.log(`[AI] First chunk in ${firstChunkMs}ms: "${chunk.substring(0, 50)}..."`);
+        }
+
+        // Speak each chunk without adding to transcript
+        await this.speak(chunk, { skipTranscript: true });
+      }
+
+      // Get the full assembled text (return value of the generator)
+      // The generator's return value may differ from our concatenated chunks
+      // (e.g., [CALL_COMPLETE] is stripped from the return value)
+      this.log(`[AI] Streaming complete: ${chunkCount} chunks, ${Date.now() - responseStart}ms total`);
+
+      if (!fullResponse) {
+        this.log('[AI] Empty streaming response');
         await this.hangup();
         return;
       }
 
-      this.log(`[TTS] Speaking: "${response.substring(0, 50)}..."`);
-      await this.speak(response);
-      this.log(`[TTS] Speech complete (${Date.now() - responseStart}ms total)`);
+      // Strip [CALL_COMPLETE] from transcript text if present
+      const transcriptText = fullResponse.replace('[CALL_COMPLETE]', '').trim();
 
-      // Check if AI marked conversation complete (handled internally)
+      // Add single combined transcript entry
+      if (transcriptText) {
+        const entry: TranscriptEntry = {
+          role: 'assistant',
+          text: transcriptText,
+          timestamp: new Date(),
+          isFinal: true,
+        };
+        this.state.transcript.push(entry);
+
+        this.emitMessage({
+          type: 'transcript',
+          callId: this.callId,
+          text: transcriptText,
+          role: 'assistant',
+          isFinal: true,
+        });
+      }
+
+      // Check if AI marked conversation complete
       if (this.conversationAI.complete) {
         this.log(`[AI] Marked complete, ending call in ${CALL_COMPLETION_DELAY_MS}ms`);
-        // Give a moment for the final response to be spoken
-        // Clear any existing hangup timer first
         if (this.hangupTimer) {
           clearTimeout(this.hangupTimer);
         }
@@ -655,7 +692,7 @@ export class CallSession extends EventEmitter {
   /**
    * Speak text using TTS
    */
-  async speak(text: string): Promise<void> {
+  async speak(text: string, options?: { skipTranscript?: boolean }): Promise<void> {
     this.log(`[TTS] speak() called: "${text.substring(0, 50)}..."`);
     if (!this.tts || !this.mediaWs) {
       this.log(`[TTS] speak() failed: not initialized (tts: ${!!this.tts}, ws: ${!!this.mediaWs})`);
@@ -736,22 +773,24 @@ export class CallSession extends EventEmitter {
         }
 
         // Add to transcript only after TTS succeeds.
-        const entry: TranscriptEntry = {
-          role: 'assistant',
-          text,
-          timestamp: new Date(),
-          isFinal: true,
-        };
-        this.state.transcript.push(entry);
+        if (!options?.skipTranscript) {
+          const entry: TranscriptEntry = {
+            role: 'assistant',
+            text,
+            timestamp: new Date(),
+            isFinal: true,
+          };
+          this.state.transcript.push(entry);
 
-        // Emit transcript event only when audio was actually produced.
-        this.emitMessage({
-          type: 'transcript',
-          callId: this.callId,
-          text,
-          role: 'assistant',
-          isFinal: true,
-        });
+          // Emit transcript event only when audio was actually produced.
+          this.emitMessage({
+            type: 'transcript',
+            callId: this.callId,
+            text,
+            role: 'assistant',
+            isFinal: true,
+          });
+        }
         return;
       } catch (err) {
         // Ensure we don't leave a stalled decoder when synthesis fails.
