@@ -548,6 +548,79 @@ describe('CallSession', () => {
       expect(leakedHuman).toBeUndefined();
     });
 
+    // Regression test for the +4989904218410 call failure:
+    // TTS generates audio faster than real-time, so the decoder closes before Twilio
+    // finishes playing. Without extended suppression, the hotel person's speech leaks
+    // through and triggers an AI response that overlaps with the still-playing greeting.
+    it('should extend echo suppression to cover estimated Twilio audio buffer when TTS is faster than real-time', async () => {
+      const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
+      const mockWs = createMockWebSocket();
+      const startMessage = createStartMessage();
+      const serverMessages: ServerMessage[] = [];
+      session.on('message', (msg) => serverMessages.push(msg));
+
+      const mockSTT = createPhoneCallSTT('test-key');
+      (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
+
+      // Override createStreamingDecoder for this test: emit 40,000 bytes of µ-law
+      // (= 5000ms of audio at 8kHz) synchronously on write(). This simulates TTS
+      // generating audio much faster than real-time, which is the normal case.
+      const customDecoder = new EventEmitter();
+      (createStreamingDecoder as ReturnType<typeof vi.fn>).mockImplementationOnce(() =>
+        Object.assign(customDecoder, {
+          start: vi.fn(),
+          write: vi.fn().mockImplementation(() => {
+            customDecoder.emit('data', Buffer.alloc(40000, 0x7f));
+            return true;
+          }),
+          end: vi.fn().mockImplementation(() => {
+            customDecoder.emit('close');
+          }),
+          stop: vi.fn().mockImplementation(() => {
+            customDecoder.emit('close');
+          }),
+          running: true,
+        }),
+      );
+
+      await session.initializeMediaStream(mockWs as any, startMessage);
+
+      // Advance past greeting delay (250ms) to trigger greeting + TTS.
+      // The decoder emits 40,000 bytes synchronously, then closes.
+      // Since firstChunkAtMs ≈ closeTime (same tick), streamingElapsedMs ≈ 0,
+      // so bufferedMs ≈ 5000ms. suppressSttUntilMs ≈ now + 5000 + 300 = now + 5300ms.
+      await vi.advanceTimersByTimeAsync(300);
+
+      // At +1300ms total — well within the 5300ms suppression window.
+      // This simulates the hotel person saying "Hello" while the greeting
+      // is still playing on Twilio (but already decoded on our side).
+      await vi.advanceTimersByTimeAsync(1000);
+      mockSTT.emit('transcript', { text: 'Hello, front desk.', isFinal: true, confidence: 0.9 });
+      await vi.advanceTimersByTimeAsync(100);
+
+      const suppressedTranscript = serverMessages.find(
+        (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('Hello, front desk'),
+      );
+      expect(suppressedTranscript).toBeUndefined();
+
+      // Verify it was suppressed in the logs
+      const suppressionLog = logMessages.find((msg) => msg.includes('Ignoring') && msg.includes('Hello, front desk'));
+      expect(suppressionLog).toBeDefined();
+
+      // Now advance past the full suppression window (5300ms from greeting)
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // Emit a transcript after the buffered audio should have finished playing.
+      // This should be accepted normally.
+      mockSTT.emit('transcript', { text: 'How can I help you today?', isFinal: true, confidence: 0.9 });
+      await vi.advanceTimersByTimeAsync(1200);
+
+      const acceptedTranscript = serverMessages.find(
+        (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('How can I help you today'),
+      );
+      expect(acceptedTranscript).toBeDefined();
+    });
+
     it('should pass short-ack turn context to ConversationAI based on latest assistant question', async () => {
       const session = new CallSession('test-call-id', mockConfig, '+1987654321', 'Book a hotel room');
       const mockWs = createMockWebSocket();

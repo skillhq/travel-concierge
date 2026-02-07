@@ -366,7 +366,48 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
 /**
  * Challenging conversation scenarios (edge cases)
  */
+// Regression: +4989904218410 call failed because the hotel answered during AI greeting
+// playback still buffered in Twilio. TTS generates audio faster than real-time, so the
+// decoder closes (and echo suppression lifts) before Twilio finishes playing. The hotel
+// person's speech leaked through and triggered an overlapping AI response — 11 second
+// monologue, hotel hung up. The fix extends suppressSttUntilMs to cover estimated
+// buffered Twilio playback (decoderBytes / 8 - streamingElapsed + 300ms).
 export const EDGE_CASE_SCRIPTS: ConversationScript[] = [
+  {
+    id: 'greeting-overlap-echo',
+    name: 'Hotel Answers During AI Greeting Playback',
+    goal: 'Book a room directly at Grand Hotel for March 15-17',
+    context:
+      'Hotel: Grand Hotel. Room: Standard Double. Dates: March 15-17. ' +
+      'Customer: John Smith (to spell: J-O-H-N S-M-I-T-H). Email: john@example.com. Phone: +1-555-000-1234.',
+    expectedOutcome: 'success',
+    turns: [
+      {
+        human: 'Hello, Grand Hotel, how can I help you?',
+        expectedBehavior:
+          'should NOT produce garbled overlapping audio — echo suppression must cover full Twilio playback buffer, not just decoder close time',
+        pauseMs: 100,
+      },
+      {
+        human: 'Hello? Are you there?',
+        expectedBehavior:
+          'should respond naturally once greeting finishes — briefly restate purpose, do NOT repeat the greeting or dump all booking details',
+        pauseMs: 3000,
+      },
+      { human: 'Sure, what dates are you looking at?', pauseMs: 500 },
+      {
+        human:
+          'Let me check... yes we have availability for March fifteenth through seventeenth. Would you like to book?',
+        pauseMs: 800,
+      },
+      { human: 'Name for the reservation?', pauseMs: 300 },
+      {
+        human:
+          "All set, John Smith, March fifteenth through seventeenth. You're confirmed. Confirmation number is GH-40821.",
+        pauseMs: 500,
+      },
+    ],
+  },
   {
     id: 'hold-please',
     name: 'Put on Hold Mid-Conversation',

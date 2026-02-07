@@ -873,6 +873,7 @@ export class CallSession extends EventEmitter {
 
       let decoderChunks = 0;
       let decoderBytes = 0;
+      let firstChunkAtMs = 0;
       this.decoder.on('data', (mulaw: Buffer) => {
         // Only process data if this is still the current decoder
         if (currentGeneration !== this.decoderGeneration) return;
@@ -880,6 +881,7 @@ export class CallSession extends EventEmitter {
         decoderChunks++;
         decoderBytes += mulaw.length;
         if (decoderChunks === 1) {
+          firstChunkAtMs = Date.now();
           this.log(`[Decoder] First chunk: ${mulaw.length} bytes, first 4 bytes: ${mulaw.slice(0, 4).toString('hex')}`);
           resolveFirstChunk?.();
           resolveFirstChunk = null;
@@ -894,9 +896,28 @@ export class CallSession extends EventEmitter {
       this.decoder.on('close', () => {
         // Only update isSpeaking if this is the current decoder
         if (currentGeneration === this.decoderGeneration) {
-          this.log('[Decoder] Closed, speech complete');
+          // IMPORTANT: TTS often generates audio faster than real-time. The decoder
+          // closes when all audio has been decoded and sent to Twilio, but Twilio
+          // may still be playing seconds of buffered audio. We must extend the echo
+          // suppression window to cover the estimated remaining Twilio playback,
+          // otherwise the hotel person's speech leaks through and triggers an AI
+          // response that overlaps with the still-playing audio.
+          // (µ-law: 8000 Hz, 1 byte/sample → decoderBytes / 8 = duration in ms)
+          const audioDurationMs = decoderBytes / 8;
+          const now = Date.now();
+          const streamingElapsedMs = firstChunkAtMs > 0 ? now - firstChunkAtMs : audioDurationMs;
+          const bufferedMs = Math.max(0, audioDurationMs - streamingElapsedMs);
+
+          this.log(
+            `[Decoder] Closed — audio: ${Math.round(audioDurationMs)}ms, ` +
+              `streamed in: ${Math.round(streamingElapsedMs)}ms, ` +
+              `estimated buffered: ${Math.round(bufferedMs)}ms`,
+          );
+
           this.isSpeaking = false;
-          this.suppressSttUntilMs = Date.now() + POST_TTS_STT_SUPPRESSION_MS;
+          // Use Math.max to avoid shrinking an existing suppression window
+          // (e.g., from a concurrent DTMF sequence)
+          this.suppressSttUntilMs = Math.max(this.suppressSttUntilMs, now + bufferedMs + POST_TTS_STT_SUPPRESSION_MS);
         }
       });
 
