@@ -352,9 +352,9 @@ export function createPhoneCallSTT(apiKey: string): DeepgramSTT {
     language: 'en-US',
     punctuate: true,
     interimResults: true,
-    // 500ms of silence within a phrase to end the utterance (Deepgram default is 300ms)
-    // Combined with 500ms response debounce = ~1s total before AI responds
-    endpointing: 500,
+    // 300ms of silence within a phrase to end the utterance (Deepgram default is 300ms)
+    // Combined with response debounce for turn timing
+    endpointing: 300,
     // Filter out low-confidence transcripts (noise, misrecognition)
     // 65% threshold balances catching real speech vs filtering garbage
     confidenceThreshold: 0.65,

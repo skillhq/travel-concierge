@@ -209,6 +209,32 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     expectedMaxDelayMs: 300 + 350 + RESPONSE_DEBOUNCE_MS + 100,
     shouldRespond: true,
   },
+  {
+    id: 'pause-near-debounce',
+    name: 'Pause near debounce boundary',
+    description: 'User pauses almost the full debounce window',
+    events: [
+      { text: 'I think', isFinal: true, delayMs: 0 },
+      { text: 'that should work', isFinal: true, delayMs: 480 },
+    ],
+    expectedTranscript: 'I think that should work',
+    expectedMinDelayMs: 480 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 480 + RESPONSE_DEBOUNCE_MS + 120,
+    shouldRespond: true,
+  },
+  {
+    id: 'pause-just-over-debounce',
+    name: 'Pause just over debounce boundary',
+    description: 'User pauses slightly too long, so response fires on first segment',
+    events: [
+      { text: 'I think', isFinal: true, delayMs: 0 },
+      { text: 'that should work', isFinal: true, delayMs: 520 },
+    ],
+    expectedTranscript: 'I think',
+    expectedMinDelayMs: RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: RESPONSE_DEBOUNCE_MS + 120,
+    shouldRespond: true,
+  },
 
   // Edge cases
   {
@@ -238,6 +264,20 @@ export const TURN_TAKING_TEST_CASES: TurnTakingTestCase[] = [
     expectedTranscript: 'Yes that sounds great lets do it',
     expectedMinDelayMs: 300 + RESPONSE_DEBOUNCE_MS - 50,
     expectedMaxDelayMs: 300 + RESPONSE_DEBOUNCE_MS + 100,
+    shouldRespond: true,
+  },
+  {
+    id: 'interim-noise-then-final',
+    name: 'Interim noise then final',
+    description: 'Interim fragments should not trigger a response',
+    events: [
+      { text: 'uh', isFinal: false, delayMs: 0 },
+      { text: 'uh okay', isFinal: false, delayMs: 120 },
+      { text: 'okay', isFinal: true, delayMs: 200 },
+    ],
+    expectedTranscript: 'okay',
+    expectedMinDelayMs: 200 + RESPONSE_DEBOUNCE_MS - 50,
+    expectedMaxDelayMs: 200 + RESPONSE_DEBOUNCE_MS + 200,
     shouldRespond: true,
   },
   {

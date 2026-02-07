@@ -41,6 +41,125 @@ const SHORT_ACK_VALUES = new Set([
   'uhhuh',
 ]);
 
+const INCOMPLETE_UTTERANCE_ENDINGS = new Set([
+  'you',
+  'your',
+  'they',
+  'them',
+  'it',
+  'this',
+  'that',
+  'these',
+  'those',
+  'the',
+  'a',
+  'an',
+  'to',
+  'for',
+  'with',
+  'on',
+  'in',
+  'of',
+  'are',
+  'is',
+  'do',
+  'does',
+  'did',
+  'can',
+  'could',
+  'would',
+  'should',
+  'will',
+]);
+
+const COMPLETE_SHORT_QUESTIONS = new Set(['how are you', 'who are you']);
+
+export function isLikelyIncompleteUtterance(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/[.!?]$/.test(trimmed)) return false;
+
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  if (COMPLETE_SHORT_QUESTIONS.has(normalized)) return false;
+
+  const words = normalized.split(' ');
+  if (words.length > 8 || words.length < 2) return false;
+
+  const lastWord = words[words.length - 1];
+  if (!INCOMPLETE_UTTERANCE_ENDINGS.has(lastWord)) return false;
+
+  const startsLikeQuestion =
+    normalized.startsWith('how ') ||
+    normalized.startsWith('how many ') ||
+    normalized.startsWith('how much ') ||
+    normalized.startsWith('what ') ||
+    normalized.startsWith('which ') ||
+    normalized.startsWith('who ') ||
+    normalized.startsWith('when ') ||
+    normalized.startsWith('where ') ||
+    normalized.startsWith('why ') ||
+    normalized.startsWith('do ') ||
+    normalized.startsWith('does ') ||
+    normalized.startsWith('did ') ||
+    normalized.startsWith('can ') ||
+    normalized.startsWith('could ') ||
+    normalized.startsWith('would ') ||
+    normalized.startsWith('should ') ||
+    normalized.startsWith('will ') ||
+    normalized.startsWith('are ') ||
+    normalized.startsWith('is ');
+
+  return startsLikeQuestion;
+}
+
+export function isSpeedComplaint(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+
+  return (
+    normalized.includes('slow') ||
+    normalized.includes('lag') ||
+    normalized.includes('latency') ||
+    normalized.includes('taking too long') ||
+    normalized.includes('too long')
+  );
+}
+
+export function isRepeatRequest(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  if (normalized.includes('repeat') || normalized.includes('say that again')) return true;
+  if (normalized.includes('can you say that again') || normalized.includes('could you say that again')) return true;
+  return false;
+}
+
+export function isAnotherRequest(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  return normalized.includes('another') || normalized.includes('one more');
+}
+
 export function isLikelyShortAcknowledgement(text: string): boolean {
   const normalized = text
     .toLowerCase()
@@ -199,6 +318,10 @@ export class ConversationAI {
     this.model = config.model || 'claude-haiku-4-5';
   }
 
+  private static readonly INCOMPLETE_UTTERANCE_RESPONSE = 'Sorry, could you finish that?';
+  private static readonly SPEED_COMPLAINT_RESPONSE = 'Sorry about that. Please continue.';
+  private static readonly REPEAT_FALLBACK_RESPONSE = 'Sorry, could you repeat that?';
+
   /**
    * Generate the initial greeting
    * NOTE: Greeting should NEVER mark conversation as complete
@@ -233,6 +356,40 @@ Generate a brief greeting to start the call. Remember:
   async respond(humanSaid: string, turnContext?: TurnContext): Promise<string | null> {
     if (this.isComplete) {
       return null;
+    }
+
+    if (isRepeatRequest(humanSaid)) {
+      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const repeatResponse = lastAssistant || ConversationAI.REPEAT_FALLBACK_RESPONSE;
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: repeatResponse });
+      return repeatResponse;
+    }
+
+    if (isSpeedComplaint(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: ConversationAI.SPEED_COMPLAINT_RESPONSE });
+      return ConversationAI.SPEED_COMPLAINT_RESPONSE;
+    }
+
+    if (isLikelyIncompleteUtterance(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: ConversationAI.INCOMPLETE_UTTERANCE_RESPONSE });
+      return ConversationAI.INCOMPLETE_UTTERANCE_RESPONSE;
+    }
+
+    if (isAnotherRequest(humanSaid)) {
+      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      if (lastAssistant) {
+        const contextLines = [
+          '[TURN CONTEXT]',
+          'The human asked for another response. Do NOT repeat your last reply.',
+          `Your previous spoken turn: "${lastAssistant}"`,
+          '',
+          `Human said: ${humanSaid}`,
+        ];
+        return this.generateResponse(contextLines.join('\n'));
+      }
     }
 
     if (!turnContext?.shortAcknowledgement) {
@@ -334,9 +491,46 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
       return '';
     }
 
+    let userInputOverride: string | null = null;
+    if (isAnotherRequest(humanSaid)) {
+      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      if (lastAssistant) {
+        userInputOverride = [
+          '[TURN CONTEXT]',
+          'The human asked for another response. Do NOT repeat your last reply.',
+          `Your previous spoken turn: "${lastAssistant}"`,
+          '',
+          `Human said: ${humanSaid}`,
+        ].join('\n');
+      }
+    }
+
+    if (isRepeatRequest(humanSaid)) {
+      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const repeatResponse = lastAssistant || ConversationAI.REPEAT_FALLBACK_RESPONSE;
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: repeatResponse });
+      yield repeatResponse;
+      return repeatResponse;
+    }
+
+    if (isSpeedComplaint(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: ConversationAI.SPEED_COMPLAINT_RESPONSE });
+      yield ConversationAI.SPEED_COMPLAINT_RESPONSE;
+      return ConversationAI.SPEED_COMPLAINT_RESPONSE;
+    }
+
+    if (isLikelyIncompleteUtterance(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: ConversationAI.INCOMPLETE_UTTERANCE_RESPONSE });
+      yield ConversationAI.INCOMPLETE_UTTERANCE_RESPONSE;
+      return ConversationAI.INCOMPLETE_UTTERANCE_RESPONSE;
+    }
+
     let userInput: string;
     if (!turnContext?.shortAcknowledgement) {
-      userInput = humanSaid;
+      userInput = userInputOverride ?? humanSaid;
     } else {
       const contextLines: string[] = [
         '[TURN CONTEXT]',

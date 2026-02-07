@@ -17,6 +17,7 @@ import type {
   TwilioMediaMessage,
 } from './call-types.js';
 import { ConversationAI, extractMostRecentQuestion, isLikelyShortAcknowledgement } from './conversation-ai.js';
+import { getEchoSuppressionDecision } from './echo-suppression.js';
 import { createPhoneCallSTT, type DeepgramSTT, type TranscriptResult } from './providers/deepgram.js';
 import { createPhoneCallTTS, ElevenLabsApiError, type ElevenLabsTTS } from './providers/elevenlabs.js';
 import { hangupCall } from './providers/twilio.js';
@@ -29,7 +30,7 @@ export interface CallSessionEvents {
 // Configurable timing constants
 const GREETING_DELAY_MS = 250;
 const CALL_COMPLETION_DELAY_MS = 3000;
-const POST_TTS_STT_SUPPRESSION_MS = 900;
+const POST_TTS_STT_SUPPRESSION_MS = 300;
 const PRE_GREETING_IDLE_MS = 700;
 const MAX_BUFFERED_STT_CHUNKS = 500;
 const PRE_GREETING_VAD_RMS_THRESHOLD = 0.015;
@@ -334,8 +335,20 @@ export class CallSession extends EventEmitter {
 
   // How long to wait after final transcript before responding (ms)
   // This allows the human to pause mid-sentence without being interrupted
-  // 500ms debounce + 500ms Deepgram endpointing = ~1s total before AI responds
+  // Deepgram endpointing + debounce = total turn latency
   private static readonly RESPONSE_DEBOUNCE_MS = 500;
+  private static readonly MIN_RESPONSE_DEBOUNCE_MS = 120;
+  private getResponseDebounceMs(text: string): number {
+    const trimmed = text.trim();
+    if (!trimmed) return CallSession.RESPONSE_DEBOUNCE_MS;
+    if (isLikelyShortAcknowledgement(trimmed)) {
+      return 180;
+    }
+    if (/[.!?]$/.test(trimmed)) {
+      return 220;
+    }
+    return CallSession.RESPONSE_DEBOUNCE_MS;
+  }
 
   /**
    * Handle transcription results from Deepgram
@@ -350,14 +363,21 @@ export class CallSession extends EventEmitter {
     }
 
     const transcriptEndMs = this.getTranscriptEndTimestampMs(result);
-    if (transcriptEndMs !== undefined && transcriptEndMs <= this.suppressSttUntilMs) {
+    const suppressionDecision = getEchoSuppressionDecision({
+      isSpeaking: this.isSpeaking,
+      suppressSttUntilMs: this.suppressSttUntilMs,
+      transcriptEndMs,
+      nowMs: Date.now(),
+    });
+
+    if (suppressionDecision === 'overlap') {
       this.log(`[STT] Ignoring likely overlap transcript by word timing: "${result.text}"`);
       return;
     }
 
     // Prevent AI voice playback/echo from being treated as human speech.
     // This intentionally drops barge-in during playback to avoid self-transcription loops.
-    if (this.isSpeaking || Date.now() < this.suppressSttUntilMs) {
+    if (suppressionDecision === 'speaking' || suppressionDecision === 'suppressed') {
       this.log(`[STT] Ignoring likely echo while AI audio is active: "${text}"`);
       return;
     }
@@ -395,7 +415,12 @@ export class CallSession extends EventEmitter {
       }
 
       // Start debounce timer - wait for more speech or timeout
-      this.log(`[Turn] Waiting ${CallSession.RESPONSE_DEBOUNCE_MS}ms for more speech...`);
+      const responseDebounceMs = this.getResponseDebounceMs(this.pendingTranscript || text);
+      const silenceMs = transcriptEndMs ? Math.max(0, Date.now() - transcriptEndMs) : 0;
+      const delayMs = Math.max(CallSession.MIN_RESPONSE_DEBOUNCE_MS, responseDebounceMs - silenceMs);
+      this.log(
+        `[Turn] Waiting ${delayMs}ms for more speech (debounce ${responseDebounceMs}ms, silence ${silenceMs}ms)...`,
+      );
       this.responseDebounceTimer = setTimeout(() => {
         this.responseDebounceTimer = null;
         const fullTranscript = this.pendingTranscript.trim();
@@ -414,7 +439,7 @@ export class CallSession extends EventEmitter {
           this.log(`[Turn] Silence confirmed, responding to: "${fullTranscript}"`);
           this.generateAIResponse(fullTranscript);
         }
-      }, CallSession.RESPONSE_DEBOUNCE_MS);
+      }, delayMs);
     }
   }
 

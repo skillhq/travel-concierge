@@ -109,7 +109,7 @@ async function transcribeAudio(
       language: 'en-US',
       punctuate: true,
       interim_results: false,
-      endpointing: 500,
+      endpointing: 300,
       encoding: 'linear16',
       sample_rate: 8000,
       channels: 1,

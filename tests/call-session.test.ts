@@ -499,17 +499,17 @@ describe('CallSession', () => {
       (createPhoneCallSTT as ReturnType<typeof vi.fn>).mockReturnValueOnce(mockSTT);
 
       await session.initializeMediaStream(mockWs as any, startMessage);
-      await vi.advanceTimersByTimeAsync(900); // greeting completes and suppression window starts
+      await vi.advanceTimersByTimeAsync(400); // greeting completes and suppression window starts
 
       mockSTT.emit('transcript', { text: 'Hello.', isFinal: true });
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(50);
 
       const immediateEcho = serverMessages.find(
         (msg) => msg.type === 'transcript' && msg.role === 'human' && msg.text.includes('Hello'),
       );
       expect(immediateEcho).toBeUndefined();
 
-      await vi.advanceTimersByTimeAsync(1100); // move past post-TTS suppression
+      await vi.advanceTimersByTimeAsync(500); // move past post-TTS suppression (300ms)
       mockSTT.emit('transcript', { text: 'I need a room.', isFinal: true });
       await vi.advanceTimersByTimeAsync(1200); // debounce + response cycle
 
@@ -538,7 +538,7 @@ describe('CallSession', () => {
         text: 'Great.',
         isFinal: true,
         confidence: 0.9,
-        words: [{ word: 'Great', start: 0.55, end: 0.7, confidence: 0.9 }],
+        words: [{ word: 'Great', start: 0.25, end: 0.35, confidence: 0.9 }],
       });
       await vi.advanceTimersByTimeAsync(1200);
 

@@ -12,6 +12,9 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConversationAI } from '../conversation-ai.js';
 import { testTTSPipeline } from './codec-test.js';
+import { runAllEchoSuppressionTests, type EchoSuppressionTestResult } from './echo-suppression-test.js';
+import { runAllStreamingChunkTests, type StreamingChunkTestResult } from './streaming-chunk-test.js';
+import { runTranscriptRegressionTests } from './transcript-regression-test.js';
 import { runAllTurnTakingTests, type TurnTakingTestResult } from './turn-taking-test.js';
 
 function countWords(text: string): number {
@@ -40,6 +43,23 @@ export interface TestSuiteResult {
     total: number;
     passedCount: number;
     failures: TurnTakingTestResult[];
+  };
+  streamingChunks: {
+    passed: boolean;
+    total: number;
+    passedCount: number;
+    failures: StreamingChunkTestResult[];
+  };
+  echoSuppression: {
+    passed: boolean;
+    total: number;
+    passedCount: number;
+    failures: EchoSuppressionTestResult[];
+  };
+  transcriptRegression: {
+    passed: boolean;
+    tests: number;
+    failures: string[];
   };
   conversationFlow: {
     passed: boolean;
@@ -122,6 +142,40 @@ async function runTurnTakingTests(): Promise<{
   failures: TurnTakingTestResult[];
 }> {
   const { passed, failed, results } = await runAllTurnTakingTests();
+  const failures = results.filter((r) => !r.passed);
+
+  return {
+    passed: failed === 0,
+    total: passed + failed,
+    passedCount: passed,
+    failures,
+  };
+}
+
+async function runStreamingChunkTests(): Promise<{
+  passed: boolean;
+  total: number;
+  passedCount: number;
+  failures: StreamingChunkTestResult[];
+}> {
+  const { passed, failed, results } = runAllStreamingChunkTests();
+  const failures = results.filter((r) => !r.passed);
+
+  return {
+    passed: failed === 0,
+    total: passed + failed,
+    passedCount: passed,
+    failures,
+  };
+}
+
+async function runEchoSuppressionTests(): Promise<{
+  passed: boolean;
+  total: number;
+  passedCount: number;
+  failures: EchoSuppressionTestResult[];
+}> {
+  const { passed, failed, results } = runAllEchoSuppressionTests();
   const failures = results.filter((r) => !r.passed);
 
   return {
@@ -539,6 +593,26 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
     `   ${turnTakingResult.passed ? '✅' : '❌'} ${turnTakingResult.passedCount}/${turnTakingResult.total} passed\n`,
   );
 
+  console.log('🧩 Running Streaming Chunk Tests...');
+  const streamingChunkResult = await runStreamingChunkTests();
+  console.log(
+    `   ${streamingChunkResult.passed ? '✅' : '❌'} ${streamingChunkResult.passedCount}/${streamingChunkResult.total} passed\n`,
+  );
+
+  console.log('🔇 Running Echo Suppression Tests...');
+  const echoSuppressionResult = await runEchoSuppressionTests();
+  console.log(
+    `   ${echoSuppressionResult.passed ? '✅' : '❌'} ${echoSuppressionResult.passedCount}/${echoSuppressionResult.total} passed\n`,
+  );
+
+  console.log('📝 Running Transcript Regression Tests...');
+  const transcriptRegressionResult = await runTranscriptRegressionTests({
+    anthropicApiKey: config.anthropicApiKey,
+  });
+  console.log(
+    `   ${transcriptRegressionResult.passed ? '✅' : '❌'} ${transcriptRegressionResult.tests - transcriptRegressionResult.failures.length}/${transcriptRegressionResult.tests} passed\n`,
+  );
+
   console.log('💬 Running Conversation Flow Tests...');
   const conversationResult = await runConversationFlowTests(config);
   console.log(
@@ -579,6 +653,9 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
   const overallPassed =
     codecResult.passed &&
     turnTakingResult.passed &&
+    streamingChunkResult.passed &&
+    echoSuppressionResult.passed &&
+    transcriptRegressionResult.passed &&
     conversationResult.passed &&
     disclosureResult.passed &&
     roleResult.passed &&
@@ -592,6 +669,9 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
     overallPassed,
     codec: codecResult,
     turnTaking: turnTakingResult,
+    streamingChunks: streamingChunkResult,
+    echoSuppression: echoSuppressionResult,
+    transcriptRegression: transcriptRegressionResult,
     conversationFlow: conversationResult,
     aiDisclosure: disclosureResult,
     roleConsistency: roleResult,
@@ -611,6 +691,15 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
   console.log(`║  Codec:           ${codecResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`);
   console.log(
     `║  Turn-Taking:     ${turnTakingResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
+  );
+  console.log(
+    `║  Streaming Chunks:${streamingChunkResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
+  );
+  console.log(
+    `║  Echo Suppress:   ${echoSuppressionResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
+  );
+  console.log(
+    `║  Transcript Reg:  ${transcriptRegressionResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
   );
   console.log(
     `║  Conversation:    ${conversationResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
@@ -645,6 +734,30 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
       console.log('Turn-taking failures:');
       for (const f of turnTakingResult.failures) {
         console.log(`  - ${f.testName}: transcript="${f.transcript}" (expected "${f.expectedTranscript}")`);
+      }
+      console.log('');
+    }
+
+    if (!streamingChunkResult.passed) {
+      console.log('Streaming chunk failures:');
+      for (const f of streamingChunkResult.failures) {
+        console.log(`  - ${f.testName}: chunk="${f.firstChunk}" (expected "${f.expectedFirstChunk}")`);
+      }
+      console.log('');
+    }
+
+    if (!echoSuppressionResult.passed) {
+      console.log('Echo suppression failures:');
+      for (const f of echoSuppressionResult.failures) {
+        console.log(`  - ${f.testName}: decision="${f.decision}" (expected "${f.expectedDecision}")`);
+      }
+      console.log('');
+    }
+
+    if (!transcriptRegressionResult.passed) {
+      console.log('Transcript regression failures:');
+      for (const f of transcriptRegressionResult.failures) {
+        console.log(`  - ${f}`);
       }
       console.log('');
     }
