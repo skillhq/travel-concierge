@@ -384,7 +384,7 @@ function runCallOverControlSocket(
 
   const flushTranscript = () => {
     if (transcriptLines.length > 0) {
-      writeFileSync(transcriptPath, transcriptLines.join('\n') + '\n');
+      writeFileSync(transcriptPath, `${transcriptLines.join('\n')}\n`);
     }
   };
 
@@ -504,7 +504,7 @@ Phone: ${options.customerPhone}${options.context ? `\n${options.context}` : ''}`
               flushTranscript();
             }
             break;
-          case 'call_ended':
+          case 'call_ended': {
             callEnded = true;
             console.log('');
             console.log(colors.muted('─'.repeat(50)));
@@ -531,6 +531,7 @@ Phone: ${options.customerPhone}${options.context ? `\n${options.context}` : ''}`
               safeResolve();
             }
             break;
+          }
           case 'error':
             console.log(colors.error(`Error: ${msg.message}`));
             if (!callId) {
@@ -621,75 +622,75 @@ export function callCommand(program: Command, getContext: () => CliContext): voi
     .option('--output-dir <dir>', 'Directory for call logs, transcripts, and recordings')
     .option('--no-auto-infra', 'Do not auto-start ngrok + server when server is unavailable')
     .action(async (phone: string, options: DirectBookingOptions) => {
-        const ctx = getContext();
-        const { colors } = ctx;
-        const config = loadConfig();
+      const ctx = getContext();
+      const { colors } = ctx;
+      const config = loadConfig();
 
-        if (!config.customerName || !config.customerEmail || !config.customerPhone) {
-          console.log(colors.error('Missing customer defaults in config.'));
-          console.log(colors.muted('Set: customerName, customerEmail, customerPhone'));
-          process.exit(1);
-        }
+      if (!config.customerName || !config.customerEmail || !config.customerPhone) {
+        console.log(colors.error('Missing customer defaults in config.'));
+        console.log(colors.muted('Set: customerName, customerEmail, customerPhone'));
+        process.exit(1);
+      }
 
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(options.checkIn) || !/^\d{4}-\d{2}-\d{2}$/.test(options.checkOut)) {
-          console.log(colors.error('Dates must be in YYYY-MM-DD format.'));
-          process.exit(1);
-        }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(options.checkIn) || !/^\d{4}-\d{2}-\d{2}$/.test(options.checkOut)) {
+        console.log(colors.error('Dates must be in YYYY-MM-DD format.'));
+        process.exit(1);
+      }
 
-        const discountValue = Number.parseFloat(options.discount ?? '10');
-        if (Number.isNaN(discountValue) || discountValue <= 0 || discountValue >= 100) {
-          console.log(colors.error(`Invalid discount percent: ${options.discount}`));
-          process.exit(1);
-        }
+      const discountValue = Number.parseFloat(options.discount ?? '10');
+      if (Number.isNaN(discountValue) || discountValue <= 0 || discountValue >= 100) {
+        console.log(colors.error(`Invalid discount percent: ${options.discount}`));
+        process.exit(1);
+      }
 
-        const room = options.room?.trim() || 'cheapest available room';
-        const currency = (options.currency ?? 'THB').trim().toUpperCase();
+      const room = options.room?.trim() || 'cheapest available room';
+      const currency = (options.currency ?? 'THB').trim().toUpperCase();
 
-        const bookingPrice = options.bookingPrice ? Number.parseFloat(options.bookingPrice) : undefined;
-        if (options.bookingPrice && Number.isNaN(bookingPrice)) {
-          console.log(colors.error(`Invalid booking price: ${options.bookingPrice}`));
-          process.exit(1);
-        }
+      const bookingPrice = options.bookingPrice ? Number.parseFloat(options.bookingPrice) : undefined;
+      if (options.bookingPrice && Number.isNaN(bookingPrice)) {
+        console.log(colors.error(`Invalid booking price: ${options.bookingPrice}`));
+        process.exit(1);
+      }
 
-        const goalParts = [
-          `Book a room directly at ${options.hotel}`,
-          `for ${options.checkIn} to ${options.checkOut}`,
-          bookingPrice
-            ? `and request ${discountValue}% off the Booking.com rate`
-            : 'and request a direct-booking discount',
-        ];
-        const goal = `${goalParts.join(' ')}.`;
+      const goalParts = [
+        `Book a room directly at ${options.hotel}`,
+        `for ${options.checkIn} to ${options.checkOut}`,
+        bookingPrice
+          ? `and request ${discountValue}% off the Booking.com rate`
+          : 'and request a direct-booking discount',
+      ];
+      const goal = `${goalParts.join(' ')}.`;
 
-        const negotiation = bookingPrice
-          ? `Reference rate: ${currency} ${bookingPrice.toFixed(0)} on Booking.com. Ask for a ${discountValue}% direct-booking discount.`
-          : `Ask for the best direct-booking rate and request a ${discountValue}% discount if possible.`;
+      const negotiation = bookingPrice
+        ? `Reference rate: ${currency} ${bookingPrice.toFixed(0)} on Booking.com. Ask for a ${discountValue}% direct-booking discount.`
+        : `Ask for the best direct-booking rate and request a ${discountValue}% discount if possible.`;
 
-        const contextLines = [
-          `Hotel: ${options.hotel}`,
-          `Dates: ${options.checkIn} to ${options.checkOut}`,
-          `Room preference: ${room}`,
-          negotiation,
-          'If discount not possible, ask for value-adds (breakfast, resort credit, upgrade, airport transfer, flexible cancellation).',
-          'Confirm final total incl. taxes/fees, cancellation policy, and get a confirmation number.',
-          'Request email confirmation.',
-        ];
+      const contextLines = [
+        `Hotel: ${options.hotel}`,
+        `Dates: ${options.checkIn} to ${options.checkOut}`,
+        `Room preference: ${room}`,
+        negotiation,
+        'If discount not possible, ask for value-adds (breakfast, resort credit, upgrade, airport transfer, flexible cancellation).',
+        'Confirm final total incl. taxes/fees, cancellation policy, and get a confirmation number.',
+        'Request email confirmation.',
+      ];
 
-        if (options.context) {
-          contextLines.push(`Additional context: ${options.context}`);
-        }
+      if (options.context) {
+        contextLines.push(`Additional context: ${options.context}`);
+      }
 
-        const callOptions: CallOptions = {
-          goal,
-          name: config.customerName,
-          email: config.customerEmail,
-          customerPhone: config.customerPhone,
-          context: contextLines.join('\n'),
-          port: options.port,
-          outputDir: options.outputDir,
-          interactive: options.interactive,
-          autoInfra: options.autoInfra,
-        };
+      const callOptions: CallOptions = {
+        goal,
+        name: config.customerName,
+        email: config.customerEmail,
+        customerPhone: config.customerPhone,
+        context: contextLines.join('\n'),
+        port: options.port,
+        outputDir: options.outputDir,
+        interactive: options.interactive,
+        autoInfra: options.autoInfra,
+      };
 
-        await executeCall(phone, callOptions, ctx);
-      });
+      await executeCall(phone, callOptions, ctx);
+    });
 }

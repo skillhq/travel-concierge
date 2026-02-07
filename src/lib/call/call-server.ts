@@ -210,7 +210,11 @@ export class CallServer extends EventEmitter {
     } else if (method === 'GET' && url.pathname.startsWith('/status/')) {
       this.handleCallStatusCheck(res, url.pathname.split('/').pop() ?? '');
     } else if (method === 'GET' && url.pathname.startsWith('/recordings/')) {
-      this.handleRecordingsRequest(res, url.pathname.split('/').pop() ?? '', url.searchParams.get('download') === 'true');
+      this.handleRecordingsRequest(
+        res,
+        url.pathname.split('/').pop() ?? '',
+        url.searchParams.get('download') === 'true',
+      );
     } else {
       this.warn(`[HTTP] Unhandled request ${method} ${url.pathname}`);
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -287,7 +291,7 @@ export class CallServer extends EventEmitter {
 
       const recording = recordings[0];
       const { twilioAccountSid, twilioAuthToken } = this.options.config;
-      const authHeader = 'Basic ' + Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64');
+      const authHeader = `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64')}`;
 
       const audioResponse = await fetch(recording.url, {
         headers: { Authorization: authHeader },

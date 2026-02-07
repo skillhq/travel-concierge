@@ -149,14 +149,7 @@ export function isRepeatRequest(text: string): boolean {
   return false;
 }
 
-const RE_ENGAGEMENT_PHRASES = new Set([
-  'hello',
-  'hi',
-  'hey',
-  'hi there',
-  'hey there',
-  'hello hello',
-]);
+const RE_ENGAGEMENT_PHRASES = new Set(['hello', 'hi', 'hey', 'hi there', 'hey there', 'hello hello']);
 
 export function isReEngagement(text: string): boolean {
   const normalized = text
@@ -401,7 +394,10 @@ Generate a brief greeting to start the call. Remember:
     }
 
     if (isRepeatRequest(humanSaid)) {
-      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const lastAssistant = [...this.messages]
+        .reverse()
+        .find((msg) => msg.role === 'assistant')
+        ?.content.trim();
       const repeatResponse = lastAssistant || ConversationAI.REPEAT_FALLBACK_RESPONSE;
       this.messages.push({ role: 'user', content: humanSaid });
       this.messages.push({ role: 'assistant', content: repeatResponse });
@@ -421,7 +417,10 @@ Generate a brief greeting to start the call. Remember:
     }
 
     if (isAnotherRequest(humanSaid)) {
-      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const lastAssistant = [...this.messages]
+        .reverse()
+        .find((msg) => msg.role === 'assistant')
+        ?.content.trim();
       if (lastAssistant) {
         const contextLines = [
           '[TURN CONTEXT]',
@@ -543,7 +542,10 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
 
     let userInputOverride: string | null = null;
     if (isAnotherRequest(humanSaid)) {
-      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const lastAssistant = [...this.messages]
+        .reverse()
+        .find((msg) => msg.role === 'assistant')
+        ?.content.trim();
       if (lastAssistant) {
         userInputOverride = [
           '[TURN CONTEXT]',
@@ -556,7 +558,10 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
     }
 
     if (isRepeatRequest(humanSaid)) {
-      const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
+      const lastAssistant = [...this.messages]
+        .reverse()
+        .find((msg) => msg.role === 'assistant')
+        ?.content.trim();
       const repeatResponse = lastAssistant || ConversationAI.REPEAT_FALLBACK_RESPONSE;
       this.messages.push({ role: 'user', content: humanSaid });
       this.messages.push({ role: 'assistant', content: repeatResponse });

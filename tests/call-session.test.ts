@@ -117,9 +117,9 @@ vi.mock('../src/lib/call/audio/streaming-decoder.js', () => ({
   }),
 }));
 
+import { createStreamingDecoder } from '../src/lib/call/audio/streaming-decoder.js';
 import { CallSession } from '../src/lib/call/call-session.js';
 import type { ServerMessage, TwilioMediaMessage } from '../src/lib/call/call-types.js';
-import { createStreamingDecoder } from '../src/lib/call/audio/streaming-decoder.js';
 import { createPhoneCallSTT } from '../src/lib/call/providers/deepgram.js';
 import { createPhoneCallTTS } from '../src/lib/call/providers/elevenlabs.js';
 

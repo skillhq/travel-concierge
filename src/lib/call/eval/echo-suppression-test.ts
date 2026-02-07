@@ -1,4 +1,4 @@
-import { getEchoSuppressionDecision, type EchoSuppressionDecision } from '../echo-suppression.js';
+import { type EchoSuppressionDecision, getEchoSuppressionDecision } from '../echo-suppression.js';
 
 export interface EchoSuppressionTestCase {
   id: string;

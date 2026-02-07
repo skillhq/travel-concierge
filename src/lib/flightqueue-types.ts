@@ -29,9 +29,7 @@ export interface FlightQueueSearchResult {
   query: string;
 }
 
-export type FlightQueueResult =
-  | { success: true; data: FlightQueueData }
-  | { success: false; error: string };
+export type FlightQueueResult = { success: true; data: FlightQueueData } | { success: false; error: string };
 
 export type FlightQueueSearchResponse =
   | { success: true; data: FlightQueueSearchResult }

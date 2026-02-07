@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConversationAI } from '../conversation-ai.js';
 import { testTTSPipeline } from './codec-test.js';
-import { runAllEchoSuppressionTests, type EchoSuppressionTestResult } from './echo-suppression-test.js';
+import { type EchoSuppressionTestResult, runAllEchoSuppressionTests } from './echo-suppression-test.js';
 import { runAllStreamingChunkTests, type StreamingChunkTestResult } from './streaming-chunk-test.js';
 import { runTranscriptRegressionTests } from './transcript-regression-test.js';
 import { runAllTurnTakingTests, type TurnTakingTestResult } from './turn-taking-test.js';

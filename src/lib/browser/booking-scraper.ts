@@ -84,7 +84,7 @@ function parseSearchResults(rawOutput: string, targetQuery: string): ParsedSearc
     // Match hotel links in search results
     // Pattern: link "Hotel 4 out of 5 stars Ramada by Wyndham Lisbon 8.2 Very Good 3.2 km from downtown Starting from Price AED 976" [ref=e52]
     const hotelMatch = line.match(
-      /link "(?:Hotel|Guesthouse|Apartment|Hostel|B&B|Resort|Villa)?\s*(\d+)?\s*out of \d+\s*(?:stars|quality rating)?\s*([^"]+?)\s+(\d+\.?\d*)\s+(Good|Very Good|Excellent|Exceptional|Superb|Wonderful|Fabulous|Pleasant|Review score)\s+[\d.]+\s*km from downtown\s+Starting from Price\s+([A-Z]{3})\s+([\d,]+)"\s*\[ref=(\w+)\]/i
+      /link "(?:Hotel|Guesthouse|Apartment|Hostel|B&B|Resort|Villa)?\s*(\d+)?\s*out of \d+\s*(?:stars|quality rating)?\s*([^"]+?)\s+(\d+\.?\d*)\s+(Good|Very Good|Excellent|Exceptional|Superb|Wonderful|Fabulous|Pleasant|Review score)\s+[\d.]+\s*km from downtown\s+Starting from Price\s+([A-Z]{3})\s+([\d,]+)"\s*\[ref=(\w+)\]/i,
     );
 
     if (hotelMatch) {
@@ -108,7 +108,7 @@ function parseSearchResults(rawOutput: string, targetQuery: string): ParsedSearc
     // Match unavailable hotel with alternative dates
     // Pattern: link "Radisson Blu Hotel Lisbon Opens in new window This property is unavailable on our site for your dates" [ref=e35]
     const unavailableMatch = line.match(
-      /link "([^"]+?)\s+Opens in new window\s+This property is unavailable[^"]*"\s*\[ref=(\w+)\]/i
+      /link "([^"]+?)\s+Opens in new window\s+This property is unavailable[^"]*"\s*\[ref=(\w+)\]/i,
     );
 
     if (unavailableMatch) {
@@ -141,7 +141,9 @@ function parseSearchResults(rawOutput: string, targetQuery: string): ParsedSearc
 
     // Match alternative dates with prices
     // Pattern: link "Feb 8 – Feb 9 1 night From AED 407.82" [ref=e40]
-    const altDateMatch = line.match(/link "([A-Za-z]{3} \d+ – [A-Za-z]{3} \d+)\s+\d+\s+nights?\s+From\s+([A-Z]{3}\s+[\d,.]+)"/i);
+    const altDateMatch = line.match(
+      /link "([A-Za-z]{3} \d+ – [A-Za-z]{3} \d+)\s+\d+\s+nights?\s+From\s+([A-Z]{3}\s+[\d,.]+)"/i,
+    );
     if (altDateMatch && currentHotel && currentHotel.unavailable) {
       currentHotel.alternativeDates = currentHotel.alternativeDates || [];
       currentHotel.alternativeDates.push({
@@ -161,10 +163,10 @@ function parseSearchResults(rawOutput: string, targetQuery: string): ParsedSearc
 
     // Match room type links
     // Pattern: link "Deluxe Double Room" [ref=e87]
-    const roomMatch = line.match(/link "((?:Deluxe|Standard|Superior|Classic|Premium|Double|Twin|Single|King|Queen|Suite|Studio|Apartment|Room)[^"]*)" \[ref=\w+\]/i);
+    const roomMatch = line.match(
+      /link "((?:Deluxe|Standard|Superior|Classic|Premium|Double|Twin|Single|King|Queen|Suite|Studio|Apartment|Room)[^"]*)" \[ref=\w+\]/i,
+    );
     if (roomMatch && currentHotel) {
-      // This indicates we're still on the same hotel's listing
-      continue;
     }
   }
 

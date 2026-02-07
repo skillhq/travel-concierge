@@ -66,9 +66,7 @@ export class FlightQueueClient {
   /**
    * Search for airports only (internal helper that closes browser)
    */
-  private async searchAirportsOnly(
-    query: string,
-  ): Promise<FlightQueueSearchResponse> {
+  private async searchAirportsOnly(query: string): Promise<FlightQueueSearchResponse> {
     const url = `${FLIGHTQUEUE_BASE_URL}/search?q=${encodeURIComponent(query)}`;
     const session = this.getNewSession();
 
@@ -220,9 +218,7 @@ export class FlightQueueClient {
       for (const entry of entries) {
         // Pattern: CODE followed by airport name (containing "Airport"), then city and country
         // Example: "JFK John F. Kennedy International Airport New York United States"
-        const match = entry
-          .trim()
-          .match(/^([A-Z]{3})\s+(.+?(?:Airport|International)[^\s]*)\s+(.+?)\s+([\w\s]+)$/i);
+        const match = entry.trim().match(/^([A-Z]{3})\s+(.+?(?:Airport|International)[^\s]*)\s+(.+?)\s+([\w\s]+)$/i);
 
         if (match) {
           airports.push({
@@ -320,10 +316,7 @@ export class FlightQueueClient {
 
     const patterns = [
       // Pattern: "Security Wait Very Busy (45+ min)" with extra spaces
-      new RegExp(
-        `${type}(?:\\s+Wait)?\\s+(Very\\s*Busy|Busy|Moderate|Fast)\\s*\\(([^)]+)\\)`,
-        'i',
-      ),
+      new RegExp(`${type}(?:\\s+Wait)?\\s+(Very\\s*Busy|Busy|Moderate|Fast)\\s*\\(([^)]+)\\)`, 'i'),
       // Pattern: "Security: 51 min"
       new RegExp(`${type}[:\\s]+(\\d+)\\s*min`, 'i'),
       // Pattern with just level (after type keyword)

@@ -85,9 +85,7 @@ function formatFlightQueueData(data: FlightQueueData, ctx: CliContext): string {
       lines.push(`  ${colors.muted('Domestic:')} ${data.recommendedArrival.domestic} min before departure`);
     }
     if (data.recommendedArrival.international) {
-      lines.push(
-        `  ${colors.muted('International:')} ${data.recommendedArrival.international} min before departure`,
-      );
+      lines.push(`  ${colors.muted('International:')} ${data.recommendedArrival.international} min before departure`);
     }
     lines.push('');
   }
