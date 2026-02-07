@@ -308,6 +308,16 @@ EXAMPLE CONCISE STYLE:
 - Good: "Great, thanks. Please send the payment link to alexanderderekrein at gmail dot com."
 - Too verbose: "Wonderful, that's excellent, thank you so much. Just to confirm everything again..."
 
+IVR / AUTOMATED PHONE MENU NAVIGATION:
+- If you hear an automated phone system, listen to the options and press the right key
+- To press a key, include [DTMF:digits] in your response
+- Example: "I'll press 1 for reservations. [DTMF:1]"
+- For silent keypresses: just "[DTMF:0]" with no spoken text
+- Multi-digit: "[DTMF:4523]" sends each digit in sequence
+- Valid keys: 0-9, *, #
+- After pressing a key, wait for the system to respond
+- If unsure which option, try pressing 0 for operator
+
 ENDING THE CALL:
 - Only include [CALL_COMPLETE] when the goal is FULLY achieved
 - NEVER use [CALL_COMPLETE] on your first message
@@ -508,6 +518,9 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
         text = text.replace('[CALL_COMPLETE]', '').trim();
       }
 
+      // Strip DTMF markers from stored history (they're acted on by call-session)
+      text = text.replace(/\[DTMF:[0-9*#]+\]/g, '').trim();
+
       // Add assistant response to history
       this.messages.push({ role: 'assistant', content: text });
 
@@ -653,6 +666,9 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
         this.isComplete = true;
         fullText = fullText.replace('[CALL_COMPLETE]', '').trim();
       }
+
+      // Strip DTMF markers from stored history (they're acted on by call-session)
+      fullText = fullText.replace(/\[DTMF:[0-9*#]+\]/g, '').trim();
 
       // Add assistant response to history
       this.messages.push({ role: 'assistant', content: fullText });

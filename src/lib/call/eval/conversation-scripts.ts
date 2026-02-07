@@ -239,9 +239,9 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
       {
         human:
           'Thank you for calling Hilton Garden Inn. For reservations, press 1. For an existing reservation, press 2. For the front desk, press 3. Or stay on the line to speak with an operator.',
+        expectedBehavior: 'should emit [DTMF:1] to select reservations',
         pauseMs: 500,
       },
-      { human: '...', pauseMs: 1500 }, // Waiting
       { human: 'Connecting you to reservations. Please hold.', pauseMs: 500 },
       { human: '...', pauseMs: 2000 }, // Hold music
       { human: 'Reservations, this is Mike. How can I help you?', pauseMs: 500 },
@@ -260,6 +260,8 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
       {
         human:
           'Thank you for calling Best Western. All of our agents are currently busy. Your estimated wait time is fifteen minutes. Press 1 to receive a callback, or stay on the line.',
+        expectedBehavior:
+          'should stay on the line (no DTMF) or press 0 for operator — not press 1 for callback since AI cannot receive callbacks',
         pauseMs: 500,
       },
       { human: '...', pauseMs: 3000 }, // Waiting on hold

@@ -5,6 +5,7 @@
 
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
+import { generateDtmfSequence } from './audio/dtmf.js';
 import { mulawToPcm } from './audio/mulaw.js';
 import { calculateRms } from './audio/pcm-utils.js';
 import { createStreamingDecoder, type StreamingDecoder } from './audio/streaming-decoder.js';
@@ -698,8 +699,19 @@ export class CallSession extends EventEmitter {
           this.log(`[AI] First chunk in ${firstChunkMs}ms: "${chunk.substring(0, 50)}..."`);
         }
 
-        // Speak each chunk without adding to transcript
-        await this.speak(chunk, { skipTranscript: true });
+        // Extract DTMF markers before speaking
+        const dtmfMatches = [...chunk.matchAll(/\[DTMF:([0-9*#]+)\]/g)];
+        const speakableText = chunk.replace(/\[DTMF:([0-9*#]+)\]/g, '').trim();
+
+        // Speak the text portion (without DTMF markers)
+        if (speakableText) {
+          await this.speak(speakableText, { skipTranscript: true });
+        }
+
+        // Send DTMF after speech completes (correct ordering)
+        for (const match of dtmfMatches) {
+          this.sendDtmf(match[1]);
+        }
       }
 
       // Get the full assembled text (return value of the generator)
@@ -713,8 +725,11 @@ export class CallSession extends EventEmitter {
         return;
       }
 
-      // Strip [CALL_COMPLETE] from transcript text if present
-      const transcriptText = fullResponse.replace('[CALL_COMPLETE]', '').trim();
+      // Strip [CALL_COMPLETE] and [DTMF:*] markers from transcript text
+      const transcriptText = fullResponse
+        .replace('[CALL_COMPLETE]', '')
+        .replace(/\[DTMF:[0-9*#]+\]/g, '')
+        .trim();
 
       // Add single combined transcript entry
       if (transcriptText) {
@@ -787,6 +802,21 @@ export class CallSession extends EventEmitter {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Send DTMF tones directly to Twilio (bypasses TTS/ffmpeg)
+   */
+  private sendDtmf(digits: string): void {
+    this.log(`[DTMF] Sending: "${digits}"`);
+    const mulaw = generateDtmfSequence(digits);
+    this.sendAudioToTwilio(mulaw);
+    // Suppress STT while tones play + a small buffer to avoid Deepgram transcribing the tones
+    const toneDurationMs = digits.length * 160 + (digits.length - 1) * 60;
+    this.suppressSttUntilMs = Math.max(
+      this.suppressSttUntilMs,
+      Date.now() + toneDurationMs + POST_TTS_STT_SUPPRESSION_MS,
+    );
   }
 
   /**

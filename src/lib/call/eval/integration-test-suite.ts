@@ -94,6 +94,11 @@ export interface TestSuiteResult {
     maxWordsPerResponse: number;
     enthusiasmCount: number;
   };
+  ivrDtmf: {
+    passed: boolean;
+    tests: number;
+    failures: string[];
+  };
 }
 
 /**
@@ -571,6 +576,102 @@ async function runConcisenessTest(config: IntegrationTestConfig): Promise<{
 }
 
 /**
+ * Test 8: IVR DTMF Navigation
+ * Verifies AI produces [DTMF:X] markers when faced with an IVR menu
+ */
+async function runIvrDtmfTests(config: IntegrationTestConfig): Promise<{
+  passed: boolean;
+  tests: number;
+  failures: string[];
+}> {
+  const failures: string[] = [];
+  let tests = 0;
+
+  // Test 1: AI should emit DTMF marker when hearing a standard IVR menu
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a hotel room',
+      context: 'Hotel: Hilton Garden Inn. Customer: Bob Wilson.',
+    });
+
+    await ai.getGreeting();
+    const response = await ai.respond(
+      'Thank you for calling Hilton Garden Inn. For reservations, press 1. For an existing reservation, press 2. For the front desk, press 3.',
+    );
+
+    if (!response) {
+      failures.push('IVR menu: AI returned empty response');
+    } else if (!/\[DTMF:[0-9*#]+\]/.test(response)) {
+      failures.push(`IVR menu: AI did not emit a DTMF marker. Response: "${response.substring(0, 100)}"`);
+    } else {
+      // Should press 1 for reservations (our goal is booking)
+      const match = response.match(/\[DTMF:([0-9*#]+)\]/);
+      if (match && match[1] !== '1') {
+        failures.push(
+          `IVR menu: AI pressed ${match[1]} but should press 1 for reservations. Response: "${response.substring(0, 100)}"`,
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`IVR menu test failed: ${error}`);
+  }
+
+  // Test 2: AI should emit DTMF:0 for operator when no clear option matches
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Ask about lost and found items',
+      context: 'Hotel: Grand Plaza.',
+    });
+
+    await ai.getGreeting();
+    const response = await ai.respond(
+      'Welcome to Grand Plaza. Press 1 for reservations. Press 2 for billing. Press 3 for events.',
+    );
+
+    if (!response) {
+      failures.push('IVR no-match: AI returned empty response');
+    } else if (!/\[DTMF:[0-9*#]+\]/.test(response)) {
+      failures.push(`IVR no-match: AI did not emit a DTMF marker. Response: "${response.substring(0, 100)}"`);
+    }
+    // We don't enforce which digit — 0 for operator is suggested but the AI may choose to wait
+  } catch (error) {
+    failures.push(`IVR no-match test failed: ${error}`);
+  }
+
+  // Test 3: DTMF markers should be stripped from conversation history
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a hotel room',
+      context: 'Hotel: Marriott. Customer: Jane Doe.',
+    });
+
+    await ai.getGreeting();
+    await ai.respond('For reservations, press 1. For front desk, press 2.');
+
+    const history = ai.getHistory();
+    const assistantMessages = history.filter((m) => m.role === 'assistant');
+    const hasDtmfInHistory = assistantMessages.some((m) => /\[DTMF:[0-9*#]+\]/.test(m.content));
+    if (hasDtmfInHistory) {
+      failures.push('DTMF markers should be stripped from conversation history but were found');
+    }
+  } catch (error) {
+    failures.push(`DTMF history stripping test failed: ${error}`);
+  }
+
+  return {
+    passed: failures.length === 0,
+    tests,
+    failures,
+  };
+}
+
+/**
  * Run the complete integration test suite
  */
 export async function runIntegrationTestSuite(config: IntegrationTestConfig): Promise<TestSuiteResult> {
@@ -649,6 +750,12 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
     `   ${concisenessResult.passed ? '✅' : '❌'} avg words: ${concisenessResult.avgWordsPerResponse.toFixed(1)}, max: ${concisenessResult.maxWordsPerResponse}, filler words: ${concisenessResult.enthusiasmCount}\n`,
   );
 
+  console.log('📞 Running IVR DTMF Navigation Tests...');
+  const ivrDtmfResult = await runIvrDtmfTests(config);
+  console.log(
+    `   ${ivrDtmfResult.passed ? '✅' : '❌'} ${ivrDtmfResult.tests - ivrDtmfResult.failures.length}/${ivrDtmfResult.tests} passed\n`,
+  );
+
   const duration = Date.now() - startTime;
   const overallPassed =
     codecResult.passed &&
@@ -661,7 +768,8 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
     roleResult.passed &&
     voiceResult.passed &&
     repetitionResult.passed &&
-    concisenessResult.passed;
+    concisenessResult.passed &&
+    ivrDtmfResult.passed;
 
   const result: TestSuiteResult = {
     timestamp: new Date().toISOString(),
@@ -678,6 +786,7 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
     voiceFormatting: voiceResult,
     noRepetition: repetitionResult,
     conciseness: concisenessResult,
+    ivrDtmf: ivrDtmfResult,
   };
 
   // Print summary
@@ -715,6 +824,7 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
   console.log(
     `║  Conciseness:     ${concisenessResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`,
   );
+  console.log(`║  IVR DTMF:        ${ivrDtmfResult.passed ? '✅ PASS' : '❌ FAIL'}                                 ║`);
   console.log(`║  Duration:        ${(duration / 1000).toFixed(1)}s                                  ║`);
   console.log('╚════════════════════════════════════════════════════════════╝\n');
 
@@ -819,6 +929,14 @@ export async function runIntegrationTestSuite(config: IntegrationTestConfig): Pr
       console.log('  Responses:');
       for (let i = 0; i < concisenessResult.responses.length; i++) {
         console.log(`    ${i + 1}. "${concisenessResult.responses[i].substring(0, 100)}..."`);
+      }
+      console.log('');
+    }
+
+    if (!ivrDtmfResult.passed) {
+      console.log('IVR DTMF navigation failures:');
+      for (const f of ivrDtmfResult.failures) {
+        console.log(`  - ${f}`);
       }
       console.log('');
     }
