@@ -149,6 +149,26 @@ export function isRepeatRequest(text: string): boolean {
   return false;
 }
 
+const RE_ENGAGEMENT_PHRASES = new Set([
+  'hello',
+  'hi',
+  'hey',
+  'hi there',
+  'hey there',
+  'hello hello',
+]);
+
+export function isReEngagement(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  return RE_ENGAGEMENT_PHRASES.has(normalized);
+}
+
 export function isAnotherRequest(text: string): boolean {
   const normalized = text
     .toLowerCase()
@@ -232,7 +252,7 @@ THINGS YOU SHOULD SAY INSTEAD:
 
 AI DISCLOSURE:
 - In your greeting, clearly state you are an AI assistant calling on behalf of a customer
-- Example: "Hi, this is an AI assistant calling on behalf of [customer name]. I'm hoping to book a room at your hotel."
+- Example: "Hi, this is an AI assistant calling on behalf of [customer name] about a booking."
 - Be upfront about being an AI - never try to hide it
 - If asked about being an AI, confirm it honestly
 
@@ -308,6 +328,7 @@ export class ConversationAI {
   private readonly goal: string;
   private readonly context: string;
   private readonly model: string;
+  private readonly reEngagementResponse: string;
   private isComplete = false;
 
   constructor(config: ConversationConfig) {
@@ -316,11 +337,24 @@ export class ConversationAI {
     this.context = config.context || '';
     // Use a fast current Haiku model for phone-call latency.
     this.model = config.model || 'claude-haiku-4-5';
+    this.reEngagementResponse = ConversationAI.buildReEngagementResponse(config.goal);
+  }
+
+  private static buildReEngagementResponse(goal: string): string {
+    let shortGoal = goal.slice(0, 60);
+    if (shortGoal.length < goal.length) {
+      const lastSpace = shortGoal.lastIndexOf(' ');
+      if (lastSpace > 20) {
+        shortGoal = shortGoal.slice(0, lastSpace);
+      }
+    }
+    return `Hi, sorry about that! I'm calling about ${shortGoal.toLowerCase()}. Can you hear me okay?`;
   }
 
   private static readonly INCOMPLETE_UTTERANCE_RESPONSE = 'Sorry, could you finish that?';
   private static readonly SPEED_COMPLAINT_RESPONSE = 'Sorry about that. Please continue.';
   private static readonly REPEAT_FALLBACK_RESPONSE = 'Sorry, could you repeat that?';
+  private static readonly UNCLEAR_SPEECH_RESPONSE = "Sorry, I didn't catch that. Could you say that again?";
 
   /**
    * Generate the initial greeting
@@ -333,11 +367,12 @@ ${this.context ? `Context: ${this.context}` : ''}
 
 Generate a brief greeting to start the call. Remember:
 - YOU are calling THEM - you are the customer seeking their help
-- Introduce yourself as an AI assistant calling on behalf of a customer
-- State your general purpose (e.g., "I'm calling about booking a room")
+- ONLY introduce yourself and state the general reason for calling
+- Do NOT include specific dates, room types, prices, or other details — save those for after they acknowledge
+- Keep it to 1 short sentence, under 15 words
+- Example: "Hi, this is an AI assistant calling on behalf of Derek Rein about a room booking."
 - Do NOT ask "How can I assist you?" - YOU need THEIR assistance
-- Do NOT include [CALL_COMPLETE]
-- Keep it to 1 sentence when possible (2 max), ideally under 30 words`;
+- Do NOT include [CALL_COMPLETE]`;
 
     const response = await this.generateResponse(userMessage);
 
@@ -356,6 +391,13 @@ Generate a brief greeting to start the call. Remember:
   async respond(humanSaid: string, turnContext?: TurnContext): Promise<string | null> {
     if (this.isComplete) {
       return null;
+    }
+
+    const hasAssistantMessage = this.messages.some((m) => m.role === 'assistant');
+    if (hasAssistantMessage && isReEngagement(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: this.reEngagementResponse });
+      return this.reEngagementResponse;
     }
 
     if (isRepeatRequest(humanSaid)) {
@@ -491,6 +533,14 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
       return '';
     }
 
+    const hasAssistantMessage = this.messages.some((m) => m.role === 'assistant');
+    if (hasAssistantMessage && isReEngagement(humanSaid)) {
+      this.messages.push({ role: 'user', content: humanSaid });
+      this.messages.push({ role: 'assistant', content: this.reEngagementResponse });
+      yield this.reEngagementResponse;
+      return this.reEngagementResponse;
+    }
+
     let userInputOverride: string | null = null;
     if (isAnotherRequest(humanSaid)) {
       const lastAssistant = [...this.messages].reverse().find((msg) => msg.role === 'assistant')?.content.trim();
@@ -609,6 +659,16 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
       this.messages.pop();
       throw new Error(`Conversation AI streaming request failed: ${details}`);
     }
+  }
+
+  /**
+   * Respond to unclear/low-confidence speech (e.g., non-English after a call transfer).
+   * Adds the exchange to conversation history so the LLM has context.
+   */
+  respondToUnclearSpeech(): string {
+    this.messages.push({ role: 'user', content: '[unclear speech]' });
+    this.messages.push({ role: 'assistant', content: ConversationAI.UNCLEAR_SPEECH_RESPONSE });
+    return ConversationAI.UNCLEAR_SPEECH_RESPONSE;
   }
 
   /**

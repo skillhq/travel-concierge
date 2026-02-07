@@ -162,6 +162,10 @@ export class DeepgramSTT extends EventEmitter {
             console.log(
               `[Deepgram] Dropping low-confidence transcript: "${transcript.transcript}" (${(confidence * 100).toFixed(1)}% < ${(threshold * 100).toFixed(0)}% threshold)`,
             );
+            this.emit('unclear_speech', {
+              text: transcript.transcript,
+              confidence,
+            });
             return;
           }
 

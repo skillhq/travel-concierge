@@ -289,6 +289,22 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
       { human: 'Is there anything else I can help you with?', pauseMs: 300 },
     ],
   },
+  {
+    id: 'transferred-call-non-english',
+    name: 'Call Transferred to Non-English Speaker',
+    goal: 'Book an Ocean View Pool Junior Suite at Trisara Resort for May 6-9, 2026',
+    context: 'Hotel: Trisara Resort, Phuket. Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    expectedOutcome: 'partial',
+    turns: [
+      { human: 'Phone moment, please. Pass your line to room reservation.' },
+      { human: '...', pauseMs: 2000 },
+      // After transfer, new person speaks — simulating what WOULD happen
+      // if unclear speech triggers the re-engagement response
+      { human: 'Yes, reservations, how can I help?', pauseMs: 500 },
+      { human: 'May sixth to ninth? Let me check availability.', pauseMs: 800 },
+      { human: 'Yes, we have an Ocean View Pool Junior Suite available. Shall I book it?', pauseMs: 500 },
+    ],
+  },
 ];
 
 /**

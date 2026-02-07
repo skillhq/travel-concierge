@@ -65,6 +65,7 @@ export class CallSession extends EventEmitter {
   private suppressSttUntilMs = 0; // Prevent echo from AI audio being transcribed as human speech
   private sttTimelineStartMs = 0; // Wall-clock anchor for Deepgram word timestamps
   private greetingStarted = false;
+  private unclearSpeechTimer: NodeJS.Timeout | null = null;
   private lastInboundTranscriptAtMs = 0;
   private lastInboundAudioActivityAtMs = 0;
   private consecutiveInboundSpeechChunks = 0;
@@ -198,16 +199,22 @@ export class CallSession extends EventEmitter {
     const sttOpenHandler = () => this.log('[STT] Deepgram connected');
     const sttCloseHandler = () => this.log('[STT] Deepgram disconnected');
 
+    const sttUnclearHandler = (info: { text: string; confidence: number }) => {
+      this.handleUnclearSpeech(info);
+    };
+
     this.stt.on('transcript', sttTranscriptHandler);
     this.stt.on('error', sttErrorHandler);
     this.stt.on('open', sttOpenHandler);
     this.stt.on('close', sttCloseHandler);
+    this.stt.on('unclear_speech', sttUnclearHandler);
 
     this.sttHandlers = [
       { event: 'transcript', handler: sttTranscriptHandler },
       { event: 'error', handler: sttErrorHandler },
       { event: 'open', handler: sttOpenHandler },
       { event: 'close', handler: sttCloseHandler },
+      { event: 'unclear_speech', handler: sttUnclearHandler },
     ];
 
     this.connectSttInBackground();
@@ -394,6 +401,12 @@ export class CallSession extends EventEmitter {
 
     // For final transcripts, use debouncing to combine segments and avoid interrupting
     if (result.isFinal) {
+      // Clear speech arrived — cancel any pending unclear speech response
+      if (this.unclearSpeechTimer) {
+        clearTimeout(this.unclearSpeechTimer);
+        this.unclearSpeechTimer = null;
+      }
+
       // Cancel any pending response timer
       if (this.responseDebounceTimer) {
         clearTimeout(this.responseDebounceTimer);
@@ -440,6 +453,68 @@ export class CallSession extends EventEmitter {
           this.generateAIResponse(fullTranscript);
         }
       }, delayMs);
+    }
+  }
+
+  /**
+   * Handle unclear/low-confidence speech from Deepgram (e.g., non-English after transfer).
+   * Debounced so multiple unclear fragments produce only one response.
+   */
+  private handleUnclearSpeech(info: { text: string; confidence: number }): void {
+    this.log(`[STT] Unclear speech detected: "${info.text}" (${(info.confidence * 100).toFixed(1)}%)`);
+
+    // Don't respond if already processing or conversation is complete
+    if (this.isProcessingResponse || this.conversationAI.complete) return;
+
+    // Don't respond if we haven't greeted yet
+    if (!this.greetingStarted) return;
+
+    // Cancel any existing unclear speech timer (debounce)
+    if (this.unclearSpeechTimer) {
+      clearTimeout(this.unclearSpeechTimer);
+    }
+
+    // Cancel any pending regular transcript timer — unclear speech takes priority
+    if (this.responseDebounceTimer) {
+      clearTimeout(this.responseDebounceTimer);
+      this.responseDebounceTimer = null;
+    }
+
+    // Debounce: wait 1.5s in case clearer speech follows
+    this.unclearSpeechTimer = setTimeout(() => {
+      this.unclearSpeechTimer = null;
+      if (!this.isProcessingResponse && !this.conversationAI.complete) {
+        this.log('[Turn] No clear speech followed, responding to unclear speech');
+        this.generateUnclearSpeechResponse();
+      }
+    }, 1500);
+  }
+
+  private async generateUnclearSpeechResponse(): Promise<void> {
+    this.isProcessingResponse = true;
+    try {
+      const response = this.conversationAI.respondToUnclearSpeech();
+      this.log(`[AI] Unclear speech response: "${response}"`);
+
+      this.state.transcript.push({
+        role: 'assistant',
+        text: response,
+        timestamp: new Date(),
+        isFinal: true,
+      });
+      this.emitMessage({
+        type: 'transcript',
+        callId: this.callId,
+        text: response,
+        role: 'assistant',
+        isFinal: true,
+      });
+
+      await this.speak(response, { skipTranscript: true });
+    } catch (err) {
+      this.log(`[AI] Unclear speech response error: ${this.formatError(err)}`);
+    } finally {
+      this.isProcessingResponse = false;
     }
   }
 
@@ -957,6 +1032,10 @@ export class CallSession extends EventEmitter {
     if (this.responseDebounceTimer) {
       clearTimeout(this.responseDebounceTimer);
       this.responseDebounceTimer = null;
+    }
+    if (this.unclearSpeechTimer) {
+      clearTimeout(this.unclearSpeechTimer);
+      this.unclearSpeechTimer = null;
     }
     if (this.hangupTimer) {
       clearTimeout(this.hangupTimer);
