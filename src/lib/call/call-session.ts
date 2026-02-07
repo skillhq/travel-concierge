@@ -68,6 +68,7 @@ export class CallSession extends EventEmitter {
   private greetingStarted = false;
   private unclearSpeechTimer: NodeJS.Timeout | null = null;
   private lastInboundTranscriptAtMs = 0;
+  private lastInboundFinalTranscriptAtMs = 0;
   private lastInboundAudioActivityAtMs = 0;
   private consecutiveInboundSpeechChunks = 0;
   private callConnectedAtMs = 0;
@@ -349,6 +350,11 @@ export class CallSession extends EventEmitter {
   private getResponseDebounceMs(text: string): number {
     const trimmed = text.trim();
     if (!trimmed) return CallSession.RESPONSE_DEBOUNCE_MS;
+    // After a long silence (e.g., hold), use a longer debounce to avoid interrupting
+    if (this.lastInboundFinalTranscriptAtMs > 0) {
+      const gap = Date.now() - this.lastInboundFinalTranscriptAtMs;
+      if (gap > 5000) return 800;
+    }
     if (isLikelyShortAcknowledgement(trimmed)) {
       return 180;
     }
@@ -402,6 +408,8 @@ export class CallSession extends EventEmitter {
 
     // For final transcripts, use debouncing to combine segments and avoid interrupting
     if (result.isFinal) {
+      this.lastInboundFinalTranscriptAtMs = Date.now();
+
       // Clear speech arrived — cancel any pending unclear speech response
       if (this.unclearSpeechTimer) {
         clearTimeout(this.unclearSpeechTimer);
@@ -469,6 +477,16 @@ export class CallSession extends EventEmitter {
 
     // Don't respond if we haven't greeted yet
     if (!this.greetingStarted) return;
+
+    // Suppress during echo window (same guards as handleTranscript)
+    if (Date.now() < this.suppressSttUntilMs) {
+      this.log('[STT] Ignoring unclear speech during suppression window');
+      return;
+    }
+    if (this.isSpeaking) {
+      this.log('[STT] Ignoring unclear speech while AI is speaking');
+      return;
+    }
 
     // Cancel any existing unclear speech timer (debounce)
     if (this.unclearSpeechTimer) {

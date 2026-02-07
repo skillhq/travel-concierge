@@ -268,6 +268,7 @@ For PHONE numbers:
 - Use words for clarity: "area code five five five, then one two three, four five six seven"
 
 For NAMES:
+- When giving your name, ALWAYS spell it out letter-by-letter using the spelling provided in context
 - Offer to spell unusual names: "Smith, that's S-M-I-T-H"
 - Confirm spelling if asked: "Yes, John is J-O-H-N"
 
@@ -318,6 +319,13 @@ IVR / AUTOMATED PHONE MENU NAVIGATION:
 - After pressing a key, wait for the system to respond
 - If unsure which option, try pressing 0 for operator
 
+WHEN THE OTHER PARTY ENDS THE CALL:
+- If they say they need to go, are ending the call, or say goodbye - accept it gracefully
+- Say a brief thank you and include [CALL_COMPLETE]
+- Do NOT ask them to stay, transfer you, or call back
+- Do NOT try to squeeze in one more question
+- Examples: "I have to go", "I'm ending the call", "goodbye", "have a nice day", "call us back"
+
 ENDING THE CALL:
 - Only include [CALL_COMPLETE] when the goal is FULLY achieved
 - NEVER use [CALL_COMPLETE] on your first message
@@ -343,15 +351,8 @@ export class ConversationAI {
     this.reEngagementResponse = ConversationAI.buildReEngagementResponse(config.goal);
   }
 
-  private static buildReEngagementResponse(goal: string): string {
-    let shortGoal = goal.slice(0, 60);
-    if (shortGoal.length < goal.length) {
-      const lastSpace = shortGoal.lastIndexOf(' ');
-      if (lastSpace > 20) {
-        shortGoal = shortGoal.slice(0, lastSpace);
-      }
-    }
-    return `Hi, sorry about that! I'm calling about ${shortGoal.toLowerCase()}. Can you hear me okay?`;
+  private static buildReEngagementResponse(_goal: string): string {
+    return 'Hi, sorry about that! Can you hear me okay?';
   }
 
   private static readonly INCOMPLETE_UTTERANCE_RESPONSE = 'Sorry, could you finish that?';

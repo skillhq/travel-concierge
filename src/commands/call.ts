@@ -270,6 +270,13 @@ async function stopManagedInfra(runtime: ManagedInfraRuntime): Promise<void> {
   await stopProcess(runtime.ngrok, 3000);
 }
 
+function phoneticSpelling(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w.split('').join('-').toUpperCase())
+    .join(' ');
+}
+
 interface CallOptions {
   goal: string;
   name: string;
@@ -432,7 +439,7 @@ function runCallOverControlSocket(
       }
       console.log('');
 
-      const customerContext = `Customer: ${options.name}
+      const customerContext = `Customer: ${options.name} (to spell: ${phoneticSpelling(options.name)})
 Email: ${options.email}
 Phone: ${options.customerPhone}${options.context ? `\n${options.context}` : ''}`;
 

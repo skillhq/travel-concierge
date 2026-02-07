@@ -292,6 +292,60 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
     ],
   },
   {
+    id: 'hotel-ivr-transfer-interruption',
+    name: 'Hotel IVR Transfer with Interruption and Agent Ending Call',
+    goal: 'Book a room directly at One&Only Royal Mirage for 2026-05-06 to 2026-05-09 and request a direct-booking discount',
+    context:
+      'Hotel: One&Only Royal Mirage. Room preference: Palace Superior Twin Room. Dates: 2026-05-06 to 2026-05-09. Customer: Derek Rein (spelled D-E-R-E-K R-E-I-N). Email: alexanderderekrein@gmail.com.',
+    expectedOutcome: 'partial',
+    turns: [
+      { human: 'Thank you for calling One and Only Royal Mirage.', pauseMs: 300 },
+      { human: 'This call may be recorded for quality assurance and training purposes.', pauseMs: 300 },
+      {
+        human: 'For room reservations, press 1. For restaurant reservations, press 2. For spa reservations, press 3.',
+        expectedBehavior: 'should emit [DTMF:1] for reservations',
+        pauseMs: 500,
+      },
+      { human: 'Good afternoon. Reservation. This is Jan. How may I assist you?', pauseMs: 500 },
+      {
+        human: 'Hello?',
+        expectedBehavior:
+          'should NOT repeat the full booking details verbatim — just re-engage naturally and confirm they can hear',
+        pauseMs: 500,
+      },
+      { human: 'Yes. Yes, I can hear you.', pauseMs: 300 },
+      {
+        human: "Sir, I'll be more than happy to assist you with that. Allow me a moment. Can I have your name, please?",
+        expectedBehavior: 'should give the name without repeating dates/room/rate again',
+        pauseMs: 500,
+      },
+      {
+        human: 'Hello? May I have your name, please?',
+        expectedBehavior: 'should spell the name correctly: D-E-R-E-K R-E-I-N (not D-R-E-K)',
+        pauseMs: 500,
+      },
+      { human: 'And how many adults will stay?', pauseMs: 300 },
+      {
+        human: 'Allow me a moment. Can I put you on hold for a second, please?',
+        pauseMs: 500,
+      },
+      { human: '...', pauseMs: 4000 },
+      {
+        human: 'Good afternoon. Thanks for holding the line. May I have the dates and room type again please?',
+        expectedBehavior: 'should wait for agent to finish speaking before responding — do NOT interrupt',
+        pauseMs: 800,
+      },
+      {
+        human:
+          "I'm so sorry. I will have to end the call. Once you have the details ready, please give us a call back.",
+        expectedBehavior:
+          'should accept gracefully that the agent is ending the call — do NOT try to keep them on the line or ask for transfer',
+        pauseMs: 500,
+      },
+      { human: 'Have a nice day.', pauseMs: 300 },
+    ],
+  },
+  {
     id: 'transferred-call-non-english',
     name: 'Call Transferred to Non-English Speaker',
     goal: 'Book an Ocean View Pool Junior Suite at Trisara Resort for May 6-9, 2026',
