@@ -664,6 +664,39 @@ async function runIvrDtmfTests(config: IntegrationTestConfig): Promise<{
     failures.push(`DTMF history stripping test failed: ${error}`);
   }
 
+  // Test 4: AI should handle post-IVR transfer without empty message corruption
+  // Regression test: DTMF-only responses were leaving empty messages in history,
+  // causing HTTP 400 on subsequent API calls.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a room for May 6-9, 2026',
+      context: 'Hotel: Royal Mirage. Customer: Derek Rein.',
+    });
+
+    await ai.getGreeting();
+    // AI navigates IVR
+    await ai.respond('For reservations, press 1. For restaurants, press 2.');
+    // Simulate post-transfer: a real human answers
+    const postTransferResponse = await ai.respond(
+      'Good morning, reservations department, my name is Jasmine. How may I assist you?',
+    );
+
+    if (!postTransferResponse) {
+      failures.push('Post-IVR transfer: AI returned empty response to human agent');
+    }
+
+    // Verify no empty messages in history
+    const history = ai.getHistory();
+    const emptyMessages = history.filter((m) => !m.content.trim());
+    if (emptyMessages.length > 0) {
+      failures.push(`Post-IVR transfer: Found ${emptyMessages.length} empty message(s) in history`);
+    }
+  } catch (error) {
+    failures.push(`Post-IVR transfer test failed: ${error}`);
+  }
+
   return {
     passed: failures.length === 0,
     tests,

@@ -521,6 +521,13 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
       // Strip DTMF markers from stored history (they're acted on by call-session)
       text = text.replace(/\[DTMF:[0-9*#]+\]/g, '').trim();
 
+      // If response is empty after stripping markers (e.g., DTMF-only response),
+      // remove the user message too to keep alternation valid for the Anthropic API.
+      if (!text) {
+        this.messages.pop();
+        return text;
+      }
+
       // Add assistant response to history
       this.messages.push({ role: 'assistant', content: text });
 
@@ -669,6 +676,13 @@ ${this.context ? `ADDITIONAL CONTEXT: ${this.context}` : ''}`;
 
       // Strip DTMF markers from stored history (they're acted on by call-session)
       fullText = fullText.replace(/\[DTMF:[0-9*#]+\]/g, '').trim();
+
+      // If response is empty after stripping markers (e.g., DTMF-only response),
+      // remove the user message too to keep alternation valid for the Anthropic API.
+      if (!fullText) {
+        this.messages.pop();
+        return fullText;
+      }
 
       // Add assistant response to history
       this.messages.push({ role: 'assistant', content: fullText });
