@@ -421,6 +421,297 @@ export async function runTranscriptRegressionTests(
     failures.push(`Date escalation test failed: ${error}`);
   }
 
+  // Case 14: "Spell slowly please" should NOT trigger canned speed complaint.
+  // Regression: +6676324333 (Pullman Panwa, 2026-02-08) — staff asked AI to spell
+  // email slowly, AI gave canned "Sorry about that. Please continue." 3 times.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Inquire about restaurant hours at Pullman Panwa Beach Resort',
+      context: 'Hotel: Pullman Panwa. Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('May I have your email address?');
+    await ai.respond(
+      'It is alexanderderekrein at gmail dot com. A-L-E-X-A-N-D-E-R-D-E-R-E-K-R-E-I-N.',
+    );
+    const response = await ai.respond(
+      'Would you mind to spell for me a little bit slowly, please?',
+    );
+    if (!response) {
+      failures.push('Spell slowly: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      if (lower === 'sorry about that. please continue.') {
+        failures.push(
+          'Spell slowly: gave canned speed-complaint response instead of re-spelling email',
+        );
+      }
+      if (!includesAny(response, ['alexander', 'a-l-e', 'a l e', 'gmail', 'email'])) {
+        failures.push('Spell slowly: should re-spell or reference the email address');
+      }
+    }
+  } catch (error) {
+    failures.push(`Spell slowly test failed: ${error}`);
+  }
+
+  // Case 15: Pricing response should NOT name competitor platforms.
+  // Regression: +6676602500 (Pullman Phuket, 2026-02-08) — AI said "ten percent
+  // discount off the Booking.com rate".
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Deluxe Room at Pullman Phuket for May 6-9, 2026. Budget: 10% below the Booking.com rate of $150/night.',
+      context:
+        'Hotel: Pullman Phuket Panwa Beach Resort. Customer: Derek Rein. ' +
+        'Email: alexanderderekrein@gmail.com. Reference rate: $150/night on Booking.com.',
+    });
+    await ai.getGreeting();
+    const response = await ai.respond('What rate are you looking for?');
+    if (!response) {
+      failures.push('Competitor pricing: empty response');
+    } else {
+      const competitors = ['booking.com', 'expedia', 'agoda', 'hotels.com', 'trivago'];
+      if (includesAny(response, competitors)) {
+        failures.push(
+          'Competitor pricing: response named a competitor platform — should say "online rate" instead',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Competitor pricing test failed: ${error}`);
+  }
+
+  // Case 16: "Would you mind to call us back?" should be accepted gracefully.
+  // Regression: +6676602500 (Pullman Phuket, 2026-02-08) — AI said "I can call back,
+  // but I'd prefer to complete it now".
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Deluxe Room at Pullman Phuket for May 6-9, 2026',
+      context: 'Hotel: Pullman Phuket. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('We are quite busy right now.');
+    const response = await ai.respond('Would you mind to call us back in about one hour?');
+    if (!response) {
+      failures.push('Accept callback: empty response');
+    } else {
+      if (includesAny(response, ['prefer to complete', "prefer to finish", "i'd rather"])) {
+        failures.push('Accept callback: AI resisted the callback instead of accepting gracefully');
+      }
+      if (!includesAny(response, ['sure', 'of course', 'no problem', 'call back', 'will do', 'absolutely'])) {
+        failures.push('Accept callback: should accept the callback request gracefully');
+      }
+    }
+  } catch (error) {
+    failures.push(`Accept callback test failed: ${error}`);
+  }
+
+  // Case 17: "Booking is not confirmed" should ask what's needed, not ask for confirmation number.
+  // Regression: +6676602500 (Pullman Phuket, 2026-02-08) — AI asked for confirmation
+  // number 5+ times while staff said booking was not confirmed.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Deluxe Room at Pullman Phuket for May 6-9, 2026',
+      context: 'Hotel: Pullman Phuket. Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('Let me check availability for you.');
+    await ai.respond('The booking is not confirmed yet. We need to verify.');
+    const response = await ai.respond('It is still not confirmed. We are checking.');
+    if (!response) {
+      failures.push('Booking not confirmed: empty response');
+    } else {
+      if (includesAny(response, ['confirmation number', 'booking reference', 'reference number'])) {
+        failures.push(
+          'Booking not confirmed: AI asked for confirmation number when booking is explicitly not confirmed',
+        );
+      }
+      if (!includesAny(response, ['need', 'next', 'help', 'anything', 'wait', 'take your time', 'understand'])) {
+        failures.push('Booking not confirmed: should ask what is needed or offer to wait');
+      }
+    }
+  } catch (error) {
+    failures.push(`Booking not confirmed test failed: ${error}`);
+  }
+
+  // Case 18: "Are you a member of our loyalty program?" should be answered directly.
+  // Regression: +6676602500 (Pullman Phuket, 2026-02-08) — hotel asked about membership
+  // 3 times, AI ignored all 3 and kept asking its own questions.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Deluxe Room at Pullman Phuket for May 6-9, 2026',
+      context: 'Hotel: Pullman Phuket. Customer: Derek Rein. No loyalty memberships.',
+    });
+    await ai.getGreeting();
+    const response = await ai.respond('Are you a member of our loyalty program?');
+    if (!response) {
+      failures.push('Loyalty question: empty response');
+    } else {
+      if (!includesAny(response, ['no', 'not a member', 'don\'t have', 'no membership', 'not currently'])) {
+        failures.push('Loyalty question: should answer directly that there is no membership');
+      }
+    }
+  } catch (error) {
+    failures.push(`Loyalty question test failed: ${error}`);
+  }
+
+  // Case 19: "Cancellation policy is non-refundable" should be echoed back for confirmation.
+  // Regression: +6676602500 (Pullman Phuket, 2026-02-08) — AI heard "flexible" and
+  // assumed without confirming — may have actually been "non-refundable".
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Deluxe Room at Pullman Phuket for May 6-9, 2026',
+      context: 'Hotel: Pullman Phuket. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('I can offer you a deluxe room at three hundred dollars per night.');
+    const response = await ai.respond('The cancellation policy is non-refundable.');
+    if (!response) {
+      failures.push('Echo cancellation: empty response');
+    } else {
+      if (!includesAny(response, ['non-refundable', 'non refundable', 'nonrefundable'])) {
+        failures.push(
+          'Echo cancellation: should echo back "non-refundable" to confirm the policy',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Echo cancellation test failed: ${error}`);
+  }
+
+  // Case 20: Lunch/dinner restaurant structure should NOT be flattened into one list.
+  // Regression: +6676324333 (Amanpuri, 2026-02-08) — AI merged lunch-only "Nora" with
+  // dinner-only "Thai, Italian, Japanese" into a single flat list.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Inquire about restaurant options for outside guests at Amanpuri',
+      context: 'Hotel: Amanpuri, Phuket. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('For lunch we have Nora, Mediterranean cuisine.');
+    await ai.respond('For dinner we have three options: Thai, Italian, and Japanese.');
+    const response = await ai.respond('Yes, all restaurants require advance reservations.');
+    if (!response) {
+      failures.push('Structured info: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      // AI should NOT list them all in one flat group without distinguishing lunch/dinner
+      const hasNora = lower.includes('nora');
+      const hasThai = lower.includes('thai');
+      const hasItalian = lower.includes('italian');
+      const hasJapanese = lower.includes('japanese');
+      // If the AI mentions all 4 restaurants, it should maintain the lunch/dinner distinction
+      if (hasNora && hasThai && hasItalian && hasJapanese) {
+        const hasLunchDinnerDistinction =
+          lower.includes('lunch') && lower.includes('dinner');
+        if (!hasLunchDinnerDistinction) {
+          failures.push(
+            'Structured info: listed all restaurants without maintaining lunch/dinner categories',
+          );
+        }
+      }
+    }
+  } catch (error) {
+    failures.push(`Structured info test failed: ${error}`);
+  }
+
+  // Case 21: STT artifact — don't ask staff to define words they didn't say.
+  // Regression: +6676324333 (Amanpuri, 2026-02-08) — STT transcribed "advance" as "FN",
+  // AI asked "Could you clarify what FN means?" confusing the staff.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a room at Amanpuri for May 6-9, 2026',
+      context: 'Hotel: Amanpuri, Phuket. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    const response = await ai.respond('Yes, we require an FN reservation for that.');
+    if (!response) {
+      failures.push('STT artifact: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      if (
+        lower.includes('what does fn mean') ||
+        lower.includes('what is fn') ||
+        lower.includes('clarify what fn') ||
+        lower.includes('what do you mean by fn')
+      ) {
+        failures.push(
+          'STT artifact: AI asked staff to define "FN" — should interpret as "advance" or ask to repeat naturally',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`STT artifact test failed: ${error}`);
+  }
+
+  // Case 22: Don't end call while staff is mid-sentence.
+  // Regression: +6676324333 (Amanpuri, 2026-02-08) — staff said "We'll have someone to..."
+  // (about to say they'd email), AI cut them off and ended the call.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Inquire about restaurant options for outside guests at Amanpuri',
+      context: 'Hotel: Amanpuri, Phuket. Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('We have Thai, Italian, and Japanese for dinner. All need reservations.');
+    await ai.respond('The email is noted.');
+    const response = await ai.respond("Okay. We'll have someone to");
+    if (!response) {
+      failures.push('Mid-sentence end: empty response');
+    } else {
+      if (ai.complete) {
+        failures.push(
+          'Mid-sentence end: AI marked call complete while staff was mid-sentence ("We\'ll have someone to...")',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Mid-sentence end test failed: ${error}`);
+  }
+
+  // Case 23: Inquiry call — don't ask for confirmation number or request confirmation email.
+  // Regression: +6676324333 (Amanpuri, 2026-02-08) — AI asked "Could you send a
+  // confirmation of these restaurant details?" on an inquiry call (no booking made).
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Inquire about restaurant options and hours at Amanpuri',
+      context: 'Hotel: Amanpuri, Phuket. Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('We have Nora for lunch, and Thai, Italian, Japanese for dinner.');
+    const response = await ai.respond('All restaurants require advance reservations. Anything else?');
+    if (!response) {
+      failures.push('Inquiry no confirmation: empty response');
+    } else {
+      if (includesAny(response, ['confirmation number', 'confirmation email', 'send a confirmation', 'send confirmation'])) {
+        failures.push(
+          'Inquiry no confirmation: AI asked for confirmation number/email on an inquiry call — no booking was made',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Inquiry no confirmation test failed: ${error}`);
+  }
+
   return {
     passed: failures.length === 0,
     tests,
