@@ -851,6 +851,7 @@ export class CallSession extends EventEmitter {
     if (this.isSpeaking) {
       this.tts.cancel();
       this.decoder?.stop();
+      this.clearTwilioBuffer();
     }
 
     // Reset streaming state
@@ -927,6 +928,11 @@ export class CallSession extends EventEmitter {
 
       this.decoder.start();
 
+      // Create the decoder-close promise BEFORE starting TTS, so the listener is
+      // attached before the 'close' event can fire (which may happen synchronously
+      // in tests or when the decoder finishes very quickly).
+      const decoderClosePromise = this.waitForDecoderClose(currentGeneration);
+
       try {
         // Start TTS
         await this.tts.speak(text, currentGeneration);
@@ -940,6 +946,11 @@ export class CallSession extends EventEmitter {
             throw new Error('TTS produced no audio output (decoder emitted 0 chunks)');
           }
         }
+
+        // Wait for decoder to finish flushing remaining audio to Twilio.
+        // Without this, the next speak() call can arrive while the decoder is still
+        // sending its last chunks, causing it to be killed and truncating the audio.
+        await decoderClosePromise;
 
         // Add to transcript only after TTS succeeds.
         if (!options?.skipTranscript) {
@@ -980,6 +991,20 @@ export class CallSession extends EventEmitter {
       }
     }
     throw new Error('TTS failed after retry attempts');
+  }
+
+  /**
+   * Wait for the decoder to emit 'close', meaning all audio has been flushed to Twilio.
+   * Resolves immediately if the decoder is already gone or belongs to a different generation.
+   */
+  private waitForDecoderClose(generation: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.decoder || generation !== this.decoderGeneration) {
+        resolve();
+        return;
+      }
+      this.decoder.on('close', () => resolve());
+    });
   }
 
   /**
@@ -1029,6 +1054,23 @@ export class CallSession extends EventEmitter {
       this.mediaWs.send(JSON.stringify(msg));
     } catch (err) {
       this.log(`[Audio] Send error: ${err}`);
+    }
+  }
+
+  /**
+   * Clear Twilio's audio buffer so stale audio doesn't play before new speech.
+   * Called when genuinely cancelling ongoing speech (e.g., error recovery, barge-in).
+   */
+  private clearTwilioBuffer(): void {
+    if (!this.mediaWs || !this.streamSid) return;
+    try {
+      this.mediaWs.send(JSON.stringify({
+        event: 'clear',
+        streamSid: this.streamSid,
+      }));
+      this.log('[Audio] Cleared Twilio buffer');
+    } catch (err) {
+      this.log(`[Audio] Clear buffer error: ${err}`);
     }
   }
 
