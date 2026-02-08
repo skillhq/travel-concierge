@@ -361,6 +361,56 @@ export const HOLD_QUEUE_SCRIPTS: ConversationScript[] = [
       { human: 'Yes, we have an Ocean View Pool Junior Suite available. Shall I book it?', pauseMs: 500 },
     ],
   },
+  // Regression: +6676372400 (Banyan Tree Phuket, 2026-02-07) — after transfer, AI dumped
+  // all booking details in one sentence. Staff (non-native English) couldn't parse dates,
+  // took 6 attempts. AI never escalated to digit-by-digit format.
+  {
+    id: 'banyan-tree-date-confusion',
+    name: 'Banyan Tree Transfer + Date Confusion (Regression)',
+    goal: 'Book a Pool Villa at Banyan Tree Phuket for May 6, 2026 to May 9, 2026',
+    context:
+      'Hotel: Banyan Tree Phuket. Room: Pool Villa. Dates: 2026-05-06 to 2026-05-09. ' +
+      'Customer: Derek Rein (D-E-R-E-K R-E-I-N). Email: alexanderderekrein@gmail.com.',
+    expectedOutcome: 'partial',
+    turns: [
+      { human: 'Thank you for calling Banyan Tree Phuket. Let me transfer you to reservations.', pauseMs: 300 },
+      { human: '...', pauseMs: 2000 },
+      {
+        human: 'Hello, reservations. How can I help you?',
+        expectedBehavior:
+          'should re-introduce briefly and state purpose (e.g. "room booking") — NOT dump villa + dates + year + guest count + name all at once',
+        pauseMs: 500,
+      },
+      {
+        human: 'Which villa would you like?',
+        expectedBehavior: 'should answer ONLY the villa type — not add dates or other details',
+        pauseMs: 500,
+      },
+      {
+        human: 'And from which date?',
+        expectedBehavior:
+          'should give dates with day-of-week anchoring: "Wednesday, May sixth to Saturday, May ninth, twenty twenty-six"',
+        pauseMs: 500,
+      },
+      {
+        human: "Sorry, I didn't catch the date. Could you repeat?",
+        expectedBehavior:
+          'should escalate format — separate check-in/check-out: "Check-in: Wednesday, May sixth. Check-out: Saturday, May ninth."',
+        pauseMs: 500,
+      },
+      {
+        human: 'What date?',
+        expectedBehavior:
+          'should escalate further — cardinal numbers: "Day six of May to day nine of May, twenty twenty-six" — NOT repeat previous format',
+        pauseMs: 500,
+      },
+      {
+        human: 'What is the check-in?',
+        expectedBehavior: 'should give ONLY the check-in date — NOT both dates',
+        pauseMs: 500,
+      },
+    ],
+  },
   // Regression: +6676310100 (Trisara, 2026-02-07) — after transfer, AI gave canned
   // "Hi, sorry about that!" instead of re-introducing itself. Hotel asked "send email
   // to us" and AI gave its own email. AI also dropped "R-E-I-N" from email spelling.

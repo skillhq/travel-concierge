@@ -357,6 +357,70 @@ export async function runTranscriptRegressionTests(
     failures.push(`Email spelling test failed: ${error}`);
   }
 
+  // Case 12: Post-transfer first response should NOT contain dates + room + guest name
+  // all together. Regression: +6676372400 (Banyan Tree, 2026-02-07) — AI dumped all
+  // booking details in one sentence after transfer, overwhelming non-native speaker.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Pool Villa at Banyan Tree Phuket for May 6-9, 2026',
+      context:
+        'Hotel: Banyan Tree Phuket. Room: Pool Villa. Dates: May 6-9, 2026. ' +
+        'Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('Let me transfer you to reservations.');
+    const response = await ai.respond('Hello, reservations. How can I help you?');
+    if (!response) {
+      failures.push('Post-transfer pacing: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      const hasRoom = includesAny(lower, ['pool villa']);
+      const hasDates = includesAny(lower, ['may sixth', 'may 6', 'may six']);
+      const hasGuest = includesAny(lower, ['derek', 'rein']);
+      if (hasRoom && hasDates && hasGuest) {
+        failures.push(
+          'Post-transfer pacing: response dumped room + dates + guest name all at once — should state purpose briefly and let staff ask',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Post-transfer pacing test failed: ${error}`);
+  }
+
+  // Case 13: After 2+ date repeats, AI should switch format (not give identical phrasing).
+  // Regression: +6676372400 (Banyan Tree, 2026-02-07) — AI repeated same date format
+  // 6 times, never escalated to digit-by-digit despite staff not understanding.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Book a Pool Villa at Banyan Tree Phuket for May 6-9, 2026',
+      context:
+        'Hotel: Banyan Tree Phuket. Room: Pool Villa. Dates: May 6-9, 2026. ' +
+        'Customer: Derek Rein. Email: alexanderderekrein@gmail.com.',
+    });
+    await ai.getGreeting();
+    await ai.respond('What are the dates?');
+    const firstDate = await ai.respond("Sorry, I didn't catch that. Could you repeat the dates?");
+    const secondDate = await ai.respond('What date? I still cannot understand.');
+    if (!firstDate || !secondDate) {
+      failures.push('Date escalation: missing response(s)');
+    } else {
+      const ratio = overlapRatio(firstDate, secondDate);
+      if (ratio >= 0.75) {
+        failures.push(
+          'Date escalation: after 2+ repeats, AI should change format — responses are too similar (overlap: ' +
+            ratio.toFixed(2) +
+            ')',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Date escalation test failed: ${error}`);
+  }
+
   return {
     passed: failures.length === 0,
     tests,
