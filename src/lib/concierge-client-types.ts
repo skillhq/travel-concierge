@@ -1,5 +1,5 @@
 // Supported accommodation platforms
-export type Platform = 'airbnb' | 'booking' | 'vrbo' | 'expedia' | 'unknown';
+export type Platform = 'airbnb' | 'booking' | 'vrbo' | 'expedia' | 'google-places' | 'unknown';
 
 // Location information
 export interface LocationInfo {

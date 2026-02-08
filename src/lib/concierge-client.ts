@@ -8,12 +8,23 @@ import type {
   SourceInfo,
 } from './concierge-client-types.js';
 import { loadConfig } from './config.js';
+import { isGoplacesInstalled, searchWithDetails } from './goplaces.js';
+import type { PlaceDetails } from './goplaces.js';
 import { extractContacts } from './utils/contact-extractor.js';
 import { cleanPropertyName, emptyContacts, formatGoogleMapsUrl, mergeContacts } from './utils/formatters.js';
 import { parseListingUrl } from './utils/url-parser.js';
 
 export interface FindContactOptions {
   html?: string;
+  verbose?: boolean;
+}
+
+export interface FindByQueryOptions {
+  limit?: number;
+  minRating?: number;
+  type?: string;
+  radiusMeters?: number;
+  enrich?: boolean;
   verbose?: boolean;
 }
 
@@ -642,5 +653,133 @@ export class ConciergeClient {
       seen.add(key);
       return true;
     });
+  }
+
+  // --- Query-based search (unified find) ---
+
+  async findByQuery(query: string, options: FindByQueryOptions = {}): Promise<Result<ContactDossier[]>> {
+    const { verbose = false } = options;
+
+    let places: PlaceDetails[];
+
+    if (isGoplacesInstalled()) {
+      this.log('Using goplaces CLI for search...', verbose);
+      const result = await searchWithDetails(query, {
+        limit: options.limit,
+        minRating: options.minRating,
+        type: options.type,
+        radiusMeters: options.radiusMeters,
+      });
+      if (!result.success) return result;
+      places = result.data;
+    } else if (this.config.googlePlacesApiKey) {
+      this.log('goplaces not installed, falling back to direct Google Places API (1 result max)', verbose);
+      console.warn('Warning: goplaces CLI not installed. Using direct API with 1-result limit. Install goplaces for full search.');
+      const placesResult = await this.searchGooglePlaces(query);
+      if (!placesResult.success) return { success: false, error: placesResult.error };
+
+      // Build a minimal PlaceDetails from the direct API result
+      places = [{
+        id: '',
+        name: query,
+        address: '',
+        phone: placesResult.data.contacts.phone?.[0],
+        website: placesResult.data.contacts.website,
+        mapsUrl: placesResult.data.contacts.googleMapsUrl,
+      }];
+      // Extract name from source note if available
+      const note = placesResult.data.sources[0]?.note;
+      if (note?.startsWith('Matched: ')) {
+        places[0].name = note.replace('Matched: ', '');
+      }
+    } else {
+      return { success: false, error: 'No search backend available. Install goplaces CLI or configure googlePlacesApiKey.' };
+    }
+
+    if (places.length === 0) {
+      return { success: false, error: 'No results found' };
+    }
+
+    // Convert to dossiers
+    const dossiers = places.map((place) => this.placeDetailsToDossier(place));
+
+    // Determine if we should enrich
+    const shouldEnrich = options.enrich || (places.length === 1 && options.enrich !== false);
+
+    if (shouldEnrich) {
+      for (const dossier of dossiers) {
+        this.log(`Enriching: ${dossier.property.name}`, verbose);
+        await this.enrichDossier(dossier, verbose);
+      }
+    }
+
+    return { success: true, data: dossiers };
+  }
+
+  private placeDetailsToDossier(place: PlaceDetails): ContactDossier {
+    const ratingNote = place.rating !== undefined
+      ? `Rating: ${place.rating}${place.userRatingsTotal ? ` (${place.userRatingsTotal} reviews)` : ''}`
+      : undefined;
+
+    return {
+      property: {
+        platform: 'google-places',
+        name: place.name,
+        location: {
+          address: place.address || undefined,
+        },
+        listingUrl: place.mapsUrl || `https://www.google.com/maps/place/?q=place_id:${place.id}`,
+      },
+      contacts: {
+        phone: place.phone ? [place.phone] : [],
+        email: [],
+        website: place.website,
+        googleMapsUrl: place.mapsUrl,
+      },
+      sources: [
+        {
+          type: 'google-places',
+          url: place.mapsUrl,
+          confidence: 'high',
+          note: ratingNote,
+        },
+      ],
+      searchedAt: new Date().toISOString(),
+    };
+  }
+
+  async enrichDossier(dossier: ContactDossier, verbose = false): Promise<void> {
+    // Scrape website for contacts if available
+    if (dossier.contacts.website) {
+      this.log(`Scraping website: ${dossier.contacts.website}`, verbose);
+      const websiteResult = await this.scrapeContactPage(dossier.contacts.website);
+      if (websiteResult.success) {
+        dossier.contacts = mergeContacts(dossier.contacts, websiteResult.data.contacts);
+        dossier.sources.push(...websiteResult.data.sources);
+        this.log(`Found via website: ${JSON.stringify(websiteResult.data.contacts)}`, verbose);
+      }
+    }
+
+    // Look up Instagram if found
+    if (dossier.contacts.instagram) {
+      this.log(`Looking up Instagram: ${dossier.contacts.instagram}`, verbose);
+      const igResult = await this.lookupInstagramProfile(dossier.contacts.instagram);
+      if (igResult.success) {
+        const igContacts = igResult.data.contacts as ContactInfo;
+        if (igContacts.website && !dossier.contacts.website) {
+          dossier.contacts.website = igContacts.website;
+        }
+        if (igContacts.email?.length) {
+          dossier.contacts.email = [...new Set([...(dossier.contacts.email || []), ...igContacts.email])];
+        }
+        if (igContacts.phone?.length) {
+          dossier.contacts.phone = [...new Set([...(dossier.contacts.phone || []), ...igContacts.phone])];
+        }
+        dossier.sources.push(...igResult.data.sources);
+      }
+    }
+
+    // Deduplicate sources
+    dossier.sources = this.deduplicateSources(dossier.sources);
   }
 }

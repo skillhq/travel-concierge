@@ -188,6 +188,60 @@ export function formatSearchResults(places: PlaceDetails[], ctx: CliContext): st
   return lines.join('\n');
 }
 
+export function formatDossierList(dossiers: ContactDossier[], ctx: CliContext): string {
+  if (ctx.json) {
+    return JSON.stringify(dossiers, null, 2);
+  }
+
+  const { colors } = ctx;
+  const lines: string[] = [];
+
+  lines.push('');
+  lines.push(colors.highlight(`Found ${dossiers.length} result(s)`));
+  lines.push(colors.muted('────────────────────────────────────────────────────────────'));
+  lines.push('');
+
+  for (const dossier of dossiers) {
+    lines.push(colors.primary(`▸ ${dossier.property.name}`));
+
+    if (dossier.property.location.address) {
+      lines.push(`  ${colors.muted('Address:')} ${dossier.property.location.address}`);
+    }
+
+    if (dossier.contacts.phone.length > 0) {
+      lines.push(`  ${colors.muted('Phone:')} ${dossier.contacts.phone.join(', ')}`);
+    }
+
+    if (dossier.contacts.email.length > 0) {
+      lines.push(`  ${colors.muted('Email:')} ${dossier.contacts.email.join(', ')}`);
+    }
+
+    if (dossier.contacts.website) {
+      lines.push(`  ${colors.muted('Website:')} ${dossier.contacts.website}`);
+    }
+
+    // Show rating from source note
+    const ratingSource = dossier.sources.find((s) => s.note?.startsWith('Rating:'));
+    if (ratingSource?.note) {
+      const ratingMatch = ratingSource.note.match(/Rating: ([\d.]+)/);
+      if (ratingMatch) {
+        const rating = parseFloat(ratingMatch[1]);
+        const reviewMatch = ratingSource.note.match(/\((\d+) reviews\)/);
+        const reviewCount = reviewMatch ? ` (${reviewMatch[1]} reviews)` : '';
+        lines.push(`  ${colors.muted('Rating:')} ${formatStarRating(rating)}${reviewCount}`);
+      }
+    }
+
+    if (dossier.contacts.googleMapsUrl) {
+      lines.push(`  ${colors.muted('Maps:')} ${dossier.contacts.googleMapsUrl}`);
+    }
+
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 function formatStarRating(rating: number): string {
   const fullStars = Math.floor(rating);
   const hasHalfStar = rating - fullStars >= 0.5;

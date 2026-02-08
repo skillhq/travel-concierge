@@ -100,7 +100,16 @@ export function searchPlaces(query: string, options: SearchOptions = {}): Result
   }
 
   try {
-    const places = JSON.parse(result.stdout) as PlaceSearchResult[];
+    const raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    // goplaces returns place_id, map to id
+    const places: PlaceSearchResult[] = raw.map((p) => ({
+      id: (p.place_id as string) || (p.id as string) || '',
+      name: p.name as string,
+      address: p.address as string,
+      rating: p.rating as number | undefined,
+      userRatingsTotal: p.user_ratings_total as number | undefined,
+      types: p.types as string[] | undefined,
+    }));
 
     // Filter by rating if specified
     let filtered = places;
@@ -142,7 +151,19 @@ export function getPlaceDetails(placeId: string): Result<PlaceDetails> {
   }
 
   try {
-    const details = JSON.parse(result.stdout) as PlaceDetails;
+    const raw = JSON.parse(result.stdout) as Record<string, unknown>;
+    const id = (raw.place_id as string) || (raw.id as string) || placeId;
+    const details: PlaceDetails = {
+      id,
+      name: raw.name as string,
+      address: raw.address as string,
+      phone: raw.phone as string | undefined,
+      website: raw.website as string | undefined,
+      rating: raw.rating as number | undefined,
+      userRatingsTotal: raw.user_ratings_total as number | undefined,
+      mapsUrl: `https://www.google.com/maps/place/?q=place_id:${id}`,
+      types: raw.types as string[] | undefined,
+    };
     return { success: true, data: details };
   } catch {
     return { success: false, error: 'Failed to parse goplaces output' };

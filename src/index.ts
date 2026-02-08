@@ -1,6 +1,6 @@
 // Library exports
 
-export type { FindContactOptions } from './lib/concierge-client.js';
+export type { FindByQueryOptions, FindContactOptions } from './lib/concierge-client.js';
 export { ConciergeClient } from './lib/concierge-client.js';
 export type {
   ConciergeConfig,

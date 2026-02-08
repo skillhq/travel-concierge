@@ -17,6 +17,7 @@ const PLATFORM_PATTERNS: Record<Platform, RegExp[]> = {
     /expedia\.(com|[a-z]{2}|co\.[a-z]{2})\/[^/]*[Hh]otel[^/]*\/([^/?]+)/i,
     /expedia\.(com|[a-z]{2}|co\.[a-z]{2})\/[^/]+\.h(\d+)\./i,
   ],
+  'google-places': [],
   unknown: [],
 };
 

@@ -33,27 +33,36 @@ Find contact details (phone, email, WhatsApp, Instagram, etc.) for listings and 
 
 ## Capabilities
 
-### 1) Find contact details from a listing URL
+### 1) Find contacts or search for places
+
+The unified `find` command auto-detects whether you pass a listing URL or a text query.
 
 ```bash
-concierge find-contact "<url>"
+# URL → contact dossier (same as old find-contact)
+concierge find "https://www.airbnb.com/rooms/12345"
+
+# Text query → search Google Places
+concierge find "hotels in San Francisco" --limit 5
+concierge find "Trisara Resort Phuket"
+concierge find "37.7749,-122.4194" --radius-m 5000 --type hotel
+
+# Enrich multi-result with website scraping (slower)
+concierge find "hotels in Phuket" --limit 3 --enrich
 ```
 
-### 2) Search for places
+**Aliases:** `find-contact`, `fc`, `search`, `s`
 
-```bash
-concierge search "hotels in San Francisco" --limit 5
-concierge search "Paris" --min-rating 4 --json
-concierge search "37.7749,-122.4194" --radius-m 5000 --type hotel
-```
-
-**Options:**
+**Options (text search):**
 - `-l, --limit <n>` - Max results (default: 10, max: 20)
 - `--min-rating <n>` - Minimum rating (0-5)
 - `--type <type>` - Place type: lodging, hotel, resort_hotel (default: lodging)
 - `--radius-m <meters>` - Search radius for coordinate searches
+- `--enrich` - Scrape websites for email/social (auto-enabled for single results)
 
-**Requires:** `goplaces` CLI installed
+**Options (URL lookup):**
+- `--html <file>` - Path to saved HTML file (for offline/pre-fetched content)
+
+**Search backend:** Prefers `goplaces` CLI. Falls back to direct Google Places API (1 result max) if configured.
 
 ### 3) Check hotel availability on Booking.com
 
@@ -114,13 +123,19 @@ If `--booking-price` is omitted, it negotiates for the best direct rate and valu
 ### Find contacts for an Airbnb listing
 Run:
 ```bash
-concierge find-contact "https://www.airbnb.com/rooms/12345"
+concierge find "https://www.airbnb.com/rooms/12345"
 ```
 
 ### Search for hotels in a city
 Run:
 ```bash
-concierge search "hotels in Tokyo" --limit 5 --min-rating 4
+concierge find "hotels in Tokyo" --limit 5 --min-rating 4
+```
+
+### Search with full enrichment
+Run:
+```bash
+concierge find "hotels in Phuket" --limit 3 --enrich
 ```
 
 ### Check availability for a specific hotel
@@ -150,14 +165,15 @@ concierge direct-booking "+6676310100" \
   --currency THB
 ```
 
-### JSON output for scripting (contact lookup)
+### JSON output for scripting
 ```bash
-concierge find-contact --json "https://..."
+concierge find --json "https://..."
+concierge find --json "hotels in Tokyo" --limit 5
 ```
 
 ### Verbose output
 ```bash
-concierge --verbose find-contact "https://..."
+concierge --verbose find "https://..."
 ```
 
 ## Configuration
@@ -202,14 +218,14 @@ concierge config show
 
 | Feature | Required CLI | Install |
 |---------|-------------|---------|
-| `search` | `goplaces` | See goplaces documentation |
+| `find` (text search) | `goplaces` | See goplaces documentation |
 | `check-availability` | `agent-browser` | `npm install -g agent-browser && npx playwright install chromium` |
 | `call` | `ffmpeg`, `ngrok` | `brew install ffmpeg ngrok` |
 
 ## Notes
 
 - Contact extraction uses publicly available information.
-- `search` uses Google Places API via the `goplaces` CLI.
+- `find` (text search) uses Google Places API via the `goplaces` CLI, with fallback to direct API.
 - `check-availability` uses browser automation to scrape Booking.com. Results depend on DOM structure which may change.
 - `call` validates local dependencies before dialing (`ffmpeg` with MP3 decode support, and `ngrok` when auto-infra is needed).
 - `call` runs preflight checks for Twilio, Deepgram, and ElevenLabs quota before dialing.

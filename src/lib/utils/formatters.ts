@@ -6,6 +6,7 @@ export function formatPlatformName(platform: Platform): string {
     booking: 'Booking.com',
     vrbo: 'VRBO',
     expedia: 'Expedia',
+    'google-places': 'Google Places',
     unknown: 'Unknown',
   };
   return names[platform];
