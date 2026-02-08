@@ -712,6 +712,133 @@ export async function runTranscriptRegressionTests(
     failures.push(`Inquiry no confirmation test failed: ${error}`);
   }
 
+  // Case 24: Temporal callback inference — "staff available at 2 PM" should be accepted as callback.
+  // Regression: +6676317200 (2026-02-08) — staff said "the steakhouse staff will stand by around
+  // 2 PM, like in 10 minutes, so could you please call back again?" but the STT garbled the
+  // callback request and the AI pushed past it.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation at the steakhouse for 7 PM tonight',
+      context: 'Hotel: Trisara Resort. Restaurant: Age (steakhouse). Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    const response = await ai.respond(
+      'The steakhouse staff will stand by around 2 PM. Like in 10 minutes.',
+    );
+    if (!response) {
+      failures.push('Temporal callback: empty response');
+    } else {
+      if (includesAny(response, ['what is the name', 'name of the', 'which restaurant'])) {
+        failures.push(
+          'Temporal callback: AI ignored the temporal cue and kept asking questions instead of accepting the wait/callback',
+        );
+      }
+      if (!includesAny(response, ['call back', 'wait', 'hold', '2', 'sure', 'understood', 'okay', 'no problem'])) {
+        failures.push(
+          'Temporal callback: should acknowledge the time and accept the callback or offer to wait',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Temporal callback test failed: ${error}`);
+  }
+
+  // Case 25: Spelled name — when staff re-spells, treat as fresh start (don't carry phantom letters).
+  // Regression: +6676317200 (2026-02-08) — AI heard Thai-accented "A" as "H", then built "H-A-G-E"
+  // instead of "A-G-E" when staff spelled the restaurant name "Age".
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation at the steakhouse',
+      context: 'Hotel: Trisara Resort. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('Which restaurant?');
+    await ai.respond("I'm calling about your steakhouse.");
+    // Staff spells A-G-E but AI might have heard phantom "H" earlier
+    const response = await ai.respond('The name is A-G-E.');
+    if (!response) {
+      failures.push('Spelled name: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      if (lower.includes('hage') || lower.includes('h-a-g-e') || lower.includes('h a g e')) {
+        failures.push(
+          'Spelled name: AI added phantom "H" to the name — should be "Age" (A-G-E) not "HAGE"',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Spelled name test failed: ${error}`);
+  }
+
+  // Case 26: Unusual name plausibility — "HAG" as a restaurant name should trigger confirmation.
+  // Regression: +6676317200 (2026-02-08) — AI confirmed "HAG" as a steakhouse name without
+  // questioning it.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation at the steakhouse',
+      context: 'Hotel: Trisara Resort. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('Which restaurant?');
+    const response = await ai.respond('The steakhouse. H-A-G.');
+    if (!response) {
+      failures.push('Unusual name: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      // AI should either question it or offer alternative (e.g., "Did you mean A-G, like 'Age'?")
+      const justAccepted =
+        lower.includes('hag') &&
+        !lower.includes('?') &&
+        !lower.includes('confirm') &&
+        !lower.includes('correct') &&
+        !lower.includes('sure') &&
+        !lower.includes('verify');
+      if (justAccepted) {
+        failures.push(
+          'Unusual name: AI accepted "HAG" without any confirmation question — should verify unusual names',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Unusual name test failed: ${error}`);
+  }
+
+  // Case 27: Don't ask the venue what their own name is.
+  // Regression: +6676317200 (2026-02-08) — AI said "could you tell me the name of your
+  // steakhouse?" which was unprofessional and led to a garbled spelling exercise.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation at the steakhouse at Trisara Resort',
+      context: 'Hotel: Trisara Resort. Restaurant type: steakhouse. Customer: Derek Rein.',
+    });
+    await ai.getGreeting();
+    const response = await ai.respond('Which restaurant, please?');
+    if (!response) {
+      failures.push('Venue name: empty response');
+    } else {
+      if (includesAny(response, ['tell me the name', 'what is the name', 'name of your', 'what is it called'])) {
+        failures.push(
+          'Venue name: AI asked the venue what their own name is — should say "I\'m calling about your steakhouse" instead',
+        );
+      }
+      if (!includesAny(response, ['steakhouse', 'steak'])) {
+        failures.push(
+          'Venue name: response should mention the steakhouse (use info from goal/context)',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Venue name test failed: ${error}`);
+  }
+
   return {
     passed: failures.length === 0,
     tests,
