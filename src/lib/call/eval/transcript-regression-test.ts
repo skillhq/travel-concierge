@@ -839,6 +839,73 @@ export async function runTranscriptRegressionTests(
     failures.push(`Venue name test failed: ${error}`);
   }
 
+  // Case 28: Correct misheard party size.
+  // Regression: +66630508322 (Little Paris, 2026-02-10) — staff said "six people, one second"
+  // but the booking was for three. AI should correct the party size, not just say "Sure, I'll hold."
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation for 3 people at 6 PM tonight',
+      context: 'Restaurant: Little Paris French Bistronomy. Party size: 3. Time: 6 PM. Guest: Derek Rein.',
+    });
+    await ai.getGreeting();
+    // AI asks for 3 people, staff mishears as 6
+    const response = await ai.respond('Yes, six people. One second.');
+    if (!response) {
+      failures.push('Party size correction: empty response');
+    } else {
+      const lower = response.toLowerCase();
+      // Must correct the party size — should mention "three" or "3"
+      if (!includesAny(response, ['three', '3'])) {
+        failures.push(
+          'Party size correction: AI did not correct the misheard party size — should say "three" or "3" when staff said "six"',
+        );
+      }
+      // Should NOT just blindly hold without correcting
+      if (lower.includes("sure, i'll hold") && !includesAny(response, ['three', '3'])) {
+        failures.push(
+          'Party size correction: AI just said "Sure, I\'ll hold" without correcting the wrong party size',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Party size correction test failed: ${error}`);
+  }
+
+  // Case 29: Answer staff clarification questions directly.
+  // Regression: +66630508322 (Little Paris, 2026-02-10) — staff asked "How many people?" multiple
+  // times and AI gave generic "Sorry, I didn't catch that" instead of answering with the party size.
+  tests++;
+  try {
+    const ai = new ConversationAI({
+      apiKey: config.anthropicApiKey,
+      goal: 'Make a dinner reservation for 3 people at 6 PM tonight',
+      context: 'Restaurant: Little Paris French Bistronomy. Party size: 3. Time: 6 PM. Guest: Derek Rein.',
+    });
+    await ai.getGreeting();
+    await ai.respond('Hello, Little Paris.');
+    const response = await ai.respond('How many people?');
+    if (!response) {
+      failures.push('Staff clarification: empty response');
+    } else {
+      // Must answer with the party size
+      if (!includesAny(response, ['three', '3'])) {
+        failures.push(
+          'Staff clarification: AI did not answer "How many people?" with the party size — should say "three" or "3"',
+        );
+      }
+      // Should NOT give generic recovery like "didn't catch that"
+      if (includesAny(response, ["didn't catch", 'could you repeat', 'sorry, what'])) {
+        failures.push(
+          'Staff clarification: AI gave generic recovery phrase instead of answering the staff\'s question about party size',
+        );
+      }
+    }
+  } catch (error) {
+    failures.push(`Staff clarification test failed: ${error}`);
+  }
+
   return {
     passed: failures.length === 0,
     tests,

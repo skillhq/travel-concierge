@@ -157,6 +157,51 @@ export const RESTAURANT_SCRIPTS: ConversationScript[] = [
       { human: 'Perfect. We look forward to seeing you Saturday. Goodbye.', pauseMs: 300 },
     ],
   },
+  // Regression: +66630508322 (Little Paris, 2026-02-10) — staff misheard "three" as "six",
+  // AI didn't correct it, staff asked "How many people?" 3+ times, AI gave generic recovery.
+  {
+    id: 'restaurant-party-size-confusion',
+    name: 'Restaurant Party Size Confusion (Little Paris Regression)',
+    goal: 'Make a dinner reservation for 3 people at 6 PM tonight',
+    context:
+      'Restaurant: Little Paris French Bistronomy. Party size: 3. Time: 6 PM. Guest: Derek Rein.',
+    expectedOutcome: 'success',
+    turns: [
+      { human: 'Hello, Little Paris.' },
+      {
+        human: 'Yes, six people. One second.',
+        expectedBehavior:
+          'should correct the party size FIRST ("three people, not six") before acknowledging the hold',
+        pauseMs: 500,
+      },
+      {
+        human: 'How many people?',
+        expectedBehavior:
+          'should answer directly with "three" or "3 people" — NOT give generic "didn\'t catch that"',
+        pauseMs: 500,
+      },
+      {
+        human: 'How many people?',
+        expectedBehavior:
+          'should answer again with "three" — staff is asking for clarification, not repeating AI words',
+        pauseMs: 500,
+      },
+      {
+        human: 'Oh, three people. Okay. And what time?',
+        expectedBehavior: 'should confirm and say "6 PM"',
+        pauseMs: 500,
+      },
+      {
+        human: 'And the name?',
+        expectedBehavior: 'should give the guest name: "Derek Rein"',
+        pauseMs: 300,
+      },
+      {
+        human: 'Okay, three people, six PM, Derek. See you tonight.',
+        pauseMs: 300,
+      },
+    ],
+  },
   {
     id: 'restaurant-dietary-requirements',
     name: 'Restaurant with Dietary Requirements',
