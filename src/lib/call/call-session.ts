@@ -719,7 +719,7 @@ export class CallSession extends EventEmitter {
 
         // Extract DTMF markers before speaking
         const dtmfMatches = [...chunk.matchAll(/\[DTMF:([0-9*#]+)\]/g)];
-        const speakableText = chunk.replace(/\[DTMF:([0-9*#]+)\]/g, '').trim();
+        const speakableText = chunk.replace(/\[DTMF:([0-9*#]+)\]/g, '').replace('[CALL_COMPLETE]', '').trim();
 
         // Speak the text portion (without DTMF markers)
         if (speakableText) {
